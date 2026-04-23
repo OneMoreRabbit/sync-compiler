@@ -1,0 +1,43 @@
+# Valid fixture — ARC Power sync registry (intent file)
+meta:
+  version: "0.2"
+  stage: beta
+  last_modified: "2026-04-23"
+  last_modified_by: "test"
+  description: "ARC Power sync registry — intent (test fixture)"
+
+org: arc
+
+rclone_users:
+  - user: rclone_arc
+    remote_name: drive
+    provider: drive
+    key_file: arc_drive.json
+    impersonate: "system.administrator@arcpower.co"
+
+platform:
+  rclone_user: rclone_arc
+  local_base: /mnt/raid/arc
+  rclone_config: /var/lib/rclone_arc/.config/rclone/rclone.conf
+
+accounts:
+  - remote_name: drive
+    provider: drive
+    description: "ARC Power Google Workspace"
+    auth:
+      type: service_account
+      service_account_file: /etc/rclone-sa/arc_drive.json
+      impersonate: "system.administrator@arcpower.co"
+
+    sync_defaults:
+      local_subdir: drive
+      schedule: "*:0/15"
+      sync_flags:
+        - "--use-server-modtime"
+        - "--fast-list"
+      exclude_patterns:
+        - "*.tmp"
+        - ".DS_Store"
+
+    additional_excludes:
+      - "archive/**"
