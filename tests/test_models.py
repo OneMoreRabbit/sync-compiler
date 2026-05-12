@@ -1,4 +1,4 @@
-"""Schema validation tests on pydantic models."""
+"""Schema validation tests on pydantic models (v0.3)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from sync_compiler.models import (
     Auth,
     Drive,
     Platform,
-    RegistryCloud,
     RegistryMain,
+    SnapshotDrive,
+    SnapshotRegistry,
     SyncDefaults,
 )
 
@@ -29,7 +30,7 @@ class TestPlatform:
         assert p.rclone_user == "rclone_arc"
         assert p.default_owner is None
 
-    def test_rclone_user_must_be_linux_name(self):
+    def test_bad_username(self):
         with pytest.raises(ValidationError):
             Platform.model_validate({**self._valid_kwargs(), "rclone_user": "BadUser"})
 
@@ -41,11 +42,11 @@ class TestPlatform:
         with pytest.raises(ValidationError):
             Platform.model_validate({**self._valid_kwargs(), "local_base": "/mnt/../etc"})
 
-    def test_valid_mode(self):
+    def test_mode_valid(self):
         p = Platform.model_validate({**self._valid_kwargs(), "default_mode": "02770"})
         assert p.default_mode == "02770"
 
-    def test_invalid_mode(self):
+    def test_mode_invalid(self):
         with pytest.raises(ValidationError):
             Platform.model_validate({**self._valid_kwargs(), "default_mode": "9999"})
 
@@ -72,7 +73,7 @@ class TestAuth:
             })
 
 
-# ── Drive ─────────────────────────────────────────────────────────────────────
+# ── Drive (now under accounts in <org>.yml) ───────────────────────────────────
 
 class TestDrive:
     def _valid(self) -> dict:
@@ -86,49 +87,73 @@ class TestDrive:
     def test_valid(self):
         d = Drive.model_validate(self._valid())
         assert d.enabled is True
-        assert d.status is None
 
-    def test_invalid_local_name_uppercase(self):
+    def test_uppercase_local_name(self):
         with pytest.raises(ValidationError):
             Drive.model_validate({**self._valid(), "local_name": "Academy"})
 
-    def test_invalid_local_name_space(self):
+    def test_space_in_local_name(self):
         with pytest.raises(ValidationError):
             Drive.model_validate({**self._valid(), "local_name": "aca demy"})
-
-    def test_status_accepted(self):
-        d = Drive.model_validate({**self._valid(), "status": "missing_from_cloud"})
-        assert d.status == "missing_from_cloud"
-
-    def test_status_invalid(self):
-        with pytest.raises(ValidationError):
-            Drive.model_validate({**self._valid(), "status": "unknown"})
 
     def test_empty_id(self):
         with pytest.raises(ValidationError):
             Drive.model_validate({**self._valid(), "id": "   "})
+
+    def test_status_field_rejected(self):
+        """v0.3: status no longer lives on Drive (it's snapshot-only)."""
+        with pytest.raises(ValidationError):
+            Drive.model_validate({**self._valid(), "status": "missing_from_cloud"})
+
+
+# ── SnapshotDrive ─────────────────────────────────────────────────────────────
+
+class TestSnapshotDrive:
+    def test_status_new(self):
+        d = SnapshotDrive.model_validate({
+            "id": "x", "cloud_name": "X", "status": "new",
+            "suggested_local_name": "x",
+        })
+        assert d.status == "new"
+
+    def test_status_renamed(self):
+        d = SnapshotDrive.model_validate({
+            "id": "x", "cloud_name": "X New", "status": "renamed",
+            "cloud_name_was": "X Old", "cloud_name_now": "X New",
+        })
+        assert d.cloud_name_was == "X Old"
+
+    def test_unknown_status_rejected(self):
+        with pytest.raises(ValidationError):
+            SnapshotDrive.model_validate({
+                "id": "x", "cloud_name": "X", "status": "weird",
+            })
+
+    def test_enabled_field_rejected(self):
+        """v0.3 snapshot has no `enabled` field."""
+        with pytest.raises(ValidationError):
+            SnapshotDrive.model_validate({
+                "id": "x", "cloud_name": "X", "status": "new", "enabled": True,
+            })
 
 
 # ── SyncDefaults ──────────────────────────────────────────────────────────────
 
 class TestSyncDefaults:
     def test_valid(self):
-        sd = SyncDefaults.model_validate({
-            "local_subdir": "drive",
-            "schedule": "*:0/15",
-        })
+        sd = SyncDefaults.model_validate({"local_subdir": "drive", "schedule": "*:0/15"})
         assert sd.sync_flags == []
 
-    def test_absolute_subdir_rejected(self):
+    def test_absolute_subdir(self):
         with pytest.raises(ValidationError):
             SyncDefaults.model_validate({"local_subdir": "/drive", "schedule": "*:0/15"})
 
-    def test_parent_subdir_rejected(self):
+    def test_parent_subdir(self):
         with pytest.raises(ValidationError):
             SyncDefaults.model_validate({"local_subdir": "../drive", "schedule": "*:0/15"})
 
 
-# ── RegistryMain / RegistryCloud loading ──────────────────────────────────────
+# ── RegistryMain loading ──────────────────────────────────────────────────────
 
 def test_registry_main_loads_fixture(valid_dir):
     from sync_compiler.loader import load_main
@@ -137,27 +162,13 @@ def test_registry_main_loads_fixture(valid_dir):
     assert main.platform.rclone_user == "rclone_arc"
     assert len(main.accounts) == 1
     assert main.accounts[0].remote_name == "drive"
-
-
-def test_registry_cloud_loads_fixture(valid_dir):
-    from sync_compiler.loader import load_cloud
-    result = load_cloud(valid_dir / "arc.cloud.yml")
-    assert result is not None
-    cloud, _ = result
-    assert cloud.org == "arc"
-    assert len(cloud.accounts) == 1
-    assert len(cloud.accounts[0].drives) == 3
-
-
-def test_missing_cloud_returns_none(tmp_path):
-    from sync_compiler.loader import load_cloud
-    assert load_cloud(tmp_path / "does_not_exist.yml") is None
+    assert len(main.accounts[0].drives) == 3
 
 
 def test_duplicate_remote_name_rejected():
     with pytest.raises(ValidationError):
         RegistryMain.model_validate({
-            "meta": {"version": "0.2"},
+            "meta": {"version": "0.3"},
             "org": "arc",
             "platform": {
                 "rclone_user": "rclone_arc",
@@ -181,6 +192,16 @@ def test_duplicate_remote_name_rejected():
         })
 
 
-def test_registry_cloud_accepts_empty_accounts():
-    rc = RegistryCloud.model_validate({"meta": {"version": "0.2"}, "org": "arc", "accounts": []})
-    assert rc.accounts == []
+def test_snapshot_loads_minimal():
+    s = SnapshotRegistry.model_validate({
+        "meta": {
+            "version": "0.3",
+            "generated_at": "2026-05-12T00:00:00Z",
+            "generated_by": "test",
+            "source_yml_path": "/tmp/arc.yml",
+            "source_yml_hash": "sha256:abc",
+        },
+        "org": "arc",
+        "accounts": [],
+    })
+    assert s.org == "arc"

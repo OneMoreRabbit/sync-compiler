@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from .models import AccountMain
+from .models import Account
 from .rclone import RcloneRunner
 
 
@@ -29,7 +29,7 @@ class CloudDrive:
 class CloudProvider(Protocol):
     """Protocol implemented by each provider adapter."""
 
-    def list_drives(self, account: AccountMain) -> list[CloudDrive]: ...
+    def list_drives(self, account: Account) -> list[CloudDrive]: ...
 
 
 class DriveProvider:
@@ -40,7 +40,7 @@ class DriveProvider:
         self._rclone_user = rclone_user
         self._rclone_config = rclone_config
 
-    def list_drives(self, account: AccountMain) -> list[CloudDrive]:
+    def list_drives(self, account: Account) -> list[CloudDrive]:
         raw = self._runner.list_shared_drives(
             remote_name=account.remote_name,
             rclone_user=self._rclone_user,

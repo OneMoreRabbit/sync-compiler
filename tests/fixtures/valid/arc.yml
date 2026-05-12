@@ -1,10 +1,10 @@
-# Valid fixture — ARC Power sync registry (intent file)
+# Valid v0.3 fixture — ARC Power sync registry (sole source of truth)
 meta:
-  version: "0.2"
+  version: "0.3"
   stage: beta
-  last_modified: "2026-04-23"
+  last_modified: "2026-05-12"
   last_modified_by: "test"
-  description: "ARC Power sync registry — intent (test fixture)"
+  description: "ARC Power sync registry — test fixture"
 
 org: arc
 
@@ -41,3 +41,20 @@ accounts:
 
     additional_excludes:
       - "archive/**"
+
+    drives:
+      - id: "0AM0lOfo8XiIBUk9PVA"
+        cloud_name: "ARC Academy"
+        local_name: academy
+        enabled: true
+        description: "Training materials"
+
+      - id: "0ABO9zZb-4pBvUk9PVA"
+        cloud_name: "Global Media"
+        local_name: global_media
+        enabled: true
+
+      - id: "0AHW2VHH_fZemUk9PVA"
+        cloud_name: "Global"
+        local_name: global
+        enabled: false

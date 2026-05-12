@@ -1,5 +1,5 @@
 """
-sync_compiler — public API for programmatic use (CLI and future web GUI).
+sync_compiler v0.3 — public API.
 
 Example:
     from pathlib import Path
@@ -22,17 +22,17 @@ from .errors import (
 )
 from .models import (
     Account,
-    AccountCloud,
-    AccountMain,
     Auth,
     CompiledPlan,
     Drive,
     LocalDirectory,
     Platform,
     RcloneRemote,
-    Registry,
-    RegistryCloud,
     RegistryMain,
+    SnapshotAccount,
+    SnapshotDrive,
+    SnapshotMeta,
+    SnapshotRegistry,
     SyncDefaults,
     SyncInstance,
 )
@@ -42,27 +42,29 @@ from .operations import (
     LoadedRegistry,
     ValidateResult,
     compile_for_org,
-    discover,
+    discover_classify,
+    discover_write,
     load_registry,
     validate,
 )
 from .registry import (
-    DiffResult,
-    DriveDiff,
+    AccountClassification,
+    ClassificationResult,
     ValidationResult,
-    diff_against_cloud,
-    merge,
+    classify_drives,
     slugify,
+    uniquify,
     validate_registry,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
-    # Operations (high-level API)
+    # Operations
     "compile_for_org",
-    "discover",
+    "discover_classify",
+    "discover_write",
     "load_registry",
     "validate",
     "CompileResult",
@@ -70,26 +72,26 @@ __all__ = [
     "LoadedRegistry",
     "ValidateResult",
     # Registry
-    "DiffResult",
-    "DriveDiff",
+    "AccountClassification",
+    "ClassificationResult",
     "ValidationResult",
-    "diff_against_cloud",
-    "merge",
+    "classify_drives",
     "slugify",
+    "uniquify",
     "validate_registry",
     # Models
     "Account",
-    "AccountCloud",
-    "AccountMain",
     "Auth",
     "CompiledPlan",
     "Drive",
     "LocalDirectory",
     "Platform",
     "RcloneRemote",
-    "Registry",
-    "RegistryCloud",
     "RegistryMain",
+    "SnapshotAccount",
+    "SnapshotDrive",
+    "SnapshotMeta",
+    "SnapshotRegistry",
     "SyncDefaults",
     "SyncInstance",
     # Errors

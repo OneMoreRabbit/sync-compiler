@@ -1,16 +1,14 @@
 """
 Core compilation logic — pure functions, no I/O.
 
-Transforms a validated Registry into a CompiledPlan ready for emission to YAML
-or JSON. All output fields are resolved here, including override-merge and
-env-var string construction.
+Reads drives from <org>.yml (RegistryMain) and emits a CompiledPlan suitable
+for serialisation by emitter.emit().
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from typing import Any
 
 from .models import (
     Account,
@@ -19,25 +17,25 @@ from .models import (
     LocalDirectory,
     PlatformOut,
     RcloneRemote,
-    Registry,
+    RegistryMain,
     SyncDefaults,
     SyncInstance,
 )
 
-__version__ = "0.2.0"
-SCHEMA_VERSION = "0.2"
+__version__ = "0.3.0"
+SCHEMA_VERSION = "0.3"
 
 
 # ── Override merge ────────────────────────────────────────────────────────────
 
 def resolved_sync_defaults(
     defaults: SyncDefaults,
-    overrides: dict[str, Any],
+    overrides: dict,
     additional_excludes: list[str],
 ) -> SyncDefaults:
     """Apply per-drive overrides to the account's sync_defaults.
 
-    Merge rules:
+    Merge rules (unchanged from v0.2):
       - Scalars (schedule, local_subdir) -> override replaces default
       - Lists (sync_flags, exclude_patterns) -> union with defaults, stable order
       - additional_excludes (account-level) -> unioned into exclude_patterns
@@ -71,20 +69,17 @@ def _merge_list(base: list[str], extras: list[str]) -> list[str]:
 # ── Artefact naming ───────────────────────────────────────────────────────────
 
 def instance_name(org: str, drive: Drive) -> str:
-    """systemd instance identifier: '<org>-<local_name>'."""
     return f"{org}-{drive.local_name}"
 
 
 def rclone_remote_name(account: Account, drive: Drive) -> str:
-    """rclone remote block name: '<account.remote_name>_<drive.local_name>'."""
     return f"{account.remote_name}_{drive.local_name}"
 
 
-def local_dir_path(registry: Registry, account: Account, drive: Drive) -> str:
+def local_dir_path(registry: RegistryMain, account: Account, drive: Drive) -> str:
     """Full absolute POSIX path for the local sync target."""
     base = registry.platform.local_base
     subdir = account.sync_defaults.local_subdir
-    # Use PurePosixPath to always produce forward slashes, even on Windows dev machines.
     return str(PurePosixPath(base) / subdir / drive.local_name)
 
 
@@ -100,10 +95,8 @@ def timer_override_path(instance: str) -> str:
     return f"{SYSTEMD_UNIT_DIR}/rclone-sync@{instance}.timer.d/schedule.conf"
 
 
-# ── Env var construction ──────────────────────────────────────────────────────
-
 def env_vars(
-    registry: Registry,
+    registry: RegistryMain,
     account: Account,
     drive: Drive,
     resolved: SyncDefaults,
@@ -121,17 +114,16 @@ def env_vars(
     }
 
 
-# ── Main compilation entry point ──────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 def compile_plan(
-    registry: Registry,
-    source_paths: dict[str, str],
-    source_hashes: dict[str, str],
+    registry: RegistryMain,
+    source_file: str,
+    source_hash: str,
 ) -> CompiledPlan:
-    """Compile the merged registry into a CompiledPlan.
+    """Compile <org>.yml into a CompiledPlan.
 
     Deterministic: same inputs produce byte-identical output after emission.
-    Sorting happens here; the emitter does no additional reordering.
     """
     platform_out = PlatformOut(
         rclone_user=registry.platform.rclone_user,
@@ -153,7 +145,7 @@ def compile_plan(
                 account.additional_excludes,
             )
 
-            inst_name = instance_name(registry.org, drive)
+            inst = instance_name(registry.org, drive)
 
             if drive.enabled:
                 remotes.append(RcloneRemote(
@@ -164,27 +156,20 @@ def compile_plan(
                     impersonate=account.auth.impersonate,
                     team_drive=drive.id,
                 ))
-
                 local_dirs.append(LocalDirectory(
                     path=local_dir_path(registry, account, drive),
                 ))
-
                 instances.append(SyncInstance(
-                    name=inst_name,
+                    name=inst,
                     enabled=True,
-                    env_file_path=env_file_path(inst_name),
+                    env_file_path=env_file_path(inst),
                     env_vars=env_vars(registry, account, drive, resolved),
-                    timer_override_path=timer_override_path(inst_name),
+                    timer_override_path=timer_override_path(inst),
                     schedule=resolved.schedule,
                 ))
             else:
-                # Disabled: minimal instance entry so Ansible knows to stop the timer.
-                instances.append(SyncInstance(
-                    name=inst_name,
-                    enabled=False,
-                ))
+                instances.append(SyncInstance(name=inst, enabled=False))
 
-    # Deterministic ordering
     remotes.sort(key=lambda r: r.name)
     local_dirs.sort(key=lambda d: d.path)
     instances.sort(key=lambda i: i.name)
@@ -193,8 +178,8 @@ def compile_plan(
         compiled_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         compiler_version=__version__,
         schema_version=SCHEMA_VERSION,
-        source_files=source_paths,
-        source_hashes=source_hashes,
+        source_file=source_file,
+        source_hash=source_hash,
         org=registry.org,
         platform=platform_out,
         rclone_remotes=remotes,

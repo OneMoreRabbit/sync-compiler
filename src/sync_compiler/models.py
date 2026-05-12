@@ -1,19 +1,18 @@
 """
-Pydantic models for sync-compiler.
+Pydantic models for sync-compiler v0.3.
 
-Registry files (two per org):
-  <org>.yml        ->  RegistryMain    (platform, accounts with sync defaults but no drives)
-  <org>.cloud.yml  ->  RegistryCloud   (drive inventory, rewritten by `discover`)
+Schema v0.3:
+  <org>.yml        ->  RegistryMain      (sole source of truth — drives nested under accounts)
+  <org>.cloud.yml  ->  SnapshotRegistry  (tool-written discovery snapshot in .compiled/)
 
-The `Registry` model is the merged in-memory view used by the compiler and validator.
-
-Path fields are stored as plain strings (never pathlib.Path) because they refer to
-Linux target paths, and this tool runs on both Windows (dev) and Linux (prod).
+Path fields are stored as plain strings (never pathlib.Path) — they refer to
+Linux target paths and the tool runs on both Windows (dev) and Linux (prod).
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -35,7 +34,40 @@ class Meta(BaseModel):
     description: str | None = None
 
 
-# ── <org>.yml: human-owned intent ─────────────────────────────────────────────
+# ── <org>.yml — sole human-edited source of truth ─────────────────────────────
+
+class Drive(BaseModel):
+    """A drive declared under an account in <org>.yml.
+
+    `enabled` lives here (not in the snapshot) — this is the source of truth.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    cloud_name: str
+    local_name: str
+    enabled: bool
+    overrides: dict[str, Any] = Field(default_factory=dict)
+    description: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def id_nonempty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("id must not be empty")
+        return v
+
+    @field_validator("local_name")
+    @classmethod
+    def local_name_valid(cls, v: str) -> str:
+        if not LOCAL_NAME_RE.match(v):
+            raise ValueError(
+                f"'{v}' is not a valid local_name "
+                "(lowercase alphanumeric + underscores + hyphens, <= 64 chars)"
+            )
+        return v
+
 
 class Platform(BaseModel):
     """Per-org platform configuration."""
@@ -79,7 +111,7 @@ class Platform(BaseModel):
 
 
 class Auth(BaseModel):
-    """Provider auth configuration. v0.2: service_account or oauth (latter deferred)."""
+    """Provider auth configuration. v0.3: service_account (oauth deferred)."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -122,8 +154,8 @@ class SyncDefaults(BaseModel):
         return v
 
 
-class AccountMain(BaseModel):
-    """An account as declared in <org>.yml — defaults + auth, no drives yet."""
+class Account(BaseModel):
+    """An account in <org>.yml — defaults + auth + nested drives."""
 
     remote_name: str
     provider: Literal["drive"]
@@ -131,6 +163,7 @@ class AccountMain(BaseModel):
     auth: Auth
     sync_defaults: SyncDefaults
     additional_excludes: list[str] = Field(default_factory=list)
+    drives: list[Drive] = Field(default_factory=list)
 
     @field_validator("remote_name")
     @classmethod
@@ -144,8 +177,7 @@ class AccountMain(BaseModel):
 
 
 class RcloneUser(BaseModel):
-    """Entry in rclone_users[] — consumed by Ansible, declared here so sync-compile
-    can validate cross-references. Extra fields tolerated (Ansible may read more)."""
+    """Entry in rclone_users[] — consumed by Ansible, validated lightly by sync-compile."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -157,13 +189,16 @@ class RcloneUser(BaseModel):
 
 
 class RegistryMain(BaseModel):
-    """The human-owned <org>.yml file."""
+    """The human-owned <org>.yml file (v0.3) — sole source of truth.
+
+    Drives are nested under each account in `accounts[].drives`.
+    """
 
     meta: Meta
     org: str
     rclone_users: list[RcloneUser] = Field(default_factory=list)
     platform: Platform
-    accounts: list[AccountMain]
+    accounts: list[Account]
 
     @field_validator("org")
     @classmethod
@@ -174,7 +209,7 @@ class RegistryMain(BaseModel):
 
     @field_validator("accounts")
     @classmethod
-    def accounts_nonempty(cls, v: list[AccountMain]) -> list[AccountMain]:
+    def accounts_nonempty_unique(cls, v: list[Account]) -> list[Account]:
         if not v:
             raise ValueError("accounts must not be empty")
         names = [a.remote_name for a in v]
@@ -184,52 +219,56 @@ class RegistryMain(BaseModel):
         return v
 
 
-# ── <org>.cloud.yml: tool-owned drive inventory ───────────────────────────────
+# ── <org>.cloud.yml — pure discovery snapshot ─────────────────────────────────
 
-class Drive(BaseModel):
-    """A single cloud drive in the inventory."""
+DriveStatus = Literal["new", "present", "renamed", "missing_from_cloud"]
+
+
+class SnapshotDrive(BaseModel):
+    """A drive entry in the discovery snapshot.
+
+    Status-specific fields:
+      new                -> suggested_local_name set
+      renamed            -> cloud_name_was + cloud_name_now set
+      missing_from_cloud -> cloud_name reflects last-known value from <org>.yml
+      present            -> cloud_name matches <org>.yml exactly
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str
     cloud_name: str
-    local_name: str
-    enabled: bool
-    overrides: dict[str, Any] = Field(default_factory=dict)
-    description: str | None = None
-    status: Literal["missing_from_cloud"] | None = None
-
-    @field_validator("id")
-    @classmethod
-    def id_nonempty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("id must not be empty")
-        return v
-
-    @field_validator("local_name")
-    @classmethod
-    def local_name_valid(cls, v: str) -> str:
-        if not LOCAL_NAME_RE.match(v):
-            raise ValueError(
-                f"'{v}' is not a valid local_name "
-                "(lowercase alphanumeric + underscores + hyphens, <= 64 chars)"
-            )
-        return v
+    status: DriveStatus
+    suggested_local_name: str | None = None
+    cloud_name_was: str | None = None
+    cloud_name_now: str | None = None
 
 
-class AccountCloud(BaseModel):
-    """An account as declared in <org>.cloud.yml — just remote_name + drives."""
+class SnapshotAccount(BaseModel):
+    """An account in the snapshot — just the remote_name and drive inventory."""
 
     remote_name: str
-    drives: list[Drive] = Field(default_factory=list)
+    drives: list[SnapshotDrive] = Field(default_factory=list)
 
 
-class RegistryCloud(BaseModel):
-    """The tool-owned <org>.cloud.yml file."""
+class SnapshotMeta(BaseModel):
+    """Meta block of the snapshot — adds source-file hash for traceability."""
 
-    meta: Meta
+    version: str
+    stage: str | None = None
+    generated_at: str
+    generated_by: str
+    description: str | None = None
+    source_yml_path: str
+    source_yml_hash: str
+
+
+class SnapshotRegistry(BaseModel):
+    """The tool-owned <org>.cloud.yml — pure snapshot, never authoritative."""
+
+    meta: SnapshotMeta
     org: str
-    accounts: list[AccountCloud] = Field(default_factory=list)
+    accounts: list[SnapshotAccount] = Field(default_factory=list)
 
     @field_validator("org")
     @classmethod
@@ -239,39 +278,7 @@ class RegistryCloud(BaseModel):
         return v
 
 
-# ── Merged registry (in-memory only) ──────────────────────────────────────────
-
-class Account(BaseModel):
-    """Merged view of an account: main config + drive inventory."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    remote_name: str
-    provider: str
-    description: str | None
-    auth: Auth
-    sync_defaults: SyncDefaults
-    additional_excludes: list[str]
-    drives: list[Drive]
-
-
-class Registry(BaseModel):
-    """Merged registry: RegistryMain + (optional) RegistryCloud."""
-
-    meta_main: Meta
-    meta_cloud: Meta | None
-    org: str
-    rclone_users: list[RcloneUser]
-    platform: Platform
-    accounts: list[Account]
-
-
-# ── CompiledPlan (output) ─────────────────────────────────────────────────────
-# Plain dataclasses — no validation needed since they are produced internally
-# and only ever serialized out. Using dataclasses keeps the emitter simple.
-
-from dataclasses import dataclass, field  # noqa: E402
-
+# ── Compiled plan (output dataclasses, plain structs) ─────────────────────────
 
 @dataclass
 class RcloneRemote:
@@ -312,8 +319,8 @@ class CompiledPlan:
     compiled_at: str
     compiler_version: str
     schema_version: str
-    source_files: dict[str, str]
-    source_hashes: dict[str, str]
+    source_file: str
+    source_hash: str
     org: str
     platform: PlatformOut
     rclone_remotes: list[RcloneRemote] = field(default_factory=list)

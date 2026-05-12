@@ -22,19 +22,42 @@ def registry_dir(tmp_path: Path, valid_dir: Path) -> Path:
 
     Layout:
         <tmp_path>/sync/arc.yml
-        <tmp_path>/sync/arc.cloud.yml
     """
     sync = tmp_path / "sync"
     sync.mkdir(parents=True)
     shutil.copy(valid_dir / "arc.yml", sync / "arc.yml")
-    shutil.copy(valid_dir / "arc.cloud.yml", sync / "arc.cloud.yml")
     return tmp_path
 
 
 @pytest.fixture
-def registry_dir_no_cloud(tmp_path: Path, valid_dir: Path) -> Path:
-    """Like registry_dir but without arc.cloud.yml (first-run state)."""
+def v02_registry_dir(tmp_path: Path) -> Path:
+    """A registry shaped like the v0.2 layout — should trigger fail-fast."""
     sync = tmp_path / "sync"
     sync.mkdir(parents=True)
-    shutil.copy(valid_dir / "arc.yml", sync / "arc.yml")
+    (sync / "arc.yml").write_text(
+        """meta:
+  version: "0.2"
+org: arc
+platform:
+  rclone_user: rclone_arc
+  local_base: /mnt/raid/arc
+  rclone_config: /var/lib/rclone/rclone.conf
+accounts:
+  - remote_name: drive
+    provider: drive
+    auth: {type: service_account, service_account_file: /etc/sa.json}
+    sync_defaults: {local_subdir: drive, schedule: "*:0/15"}
+""",
+        encoding="utf-8",
+    )
+    (sync / "arc.cloud.yml").write_text(
+        """meta:
+  version: "0.2"
+org: arc
+accounts:
+  - remote_name: drive
+    drives: []
+""",
+        encoding="utf-8",
+    )
     return tmp_path

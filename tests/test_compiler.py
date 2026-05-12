@@ -9,9 +9,8 @@ from sync_compiler.compiler import (
     resolved_sync_defaults,
     timer_override_path,
 )
-from sync_compiler.loader import load_cloud, load_main
+from sync_compiler.loader import load_main
 from sync_compiler.models import Drive, SyncDefaults
-from sync_compiler.registry import merge
 
 # ── resolved_sync_defaults (override merge) ───────────────────────────────────
 
@@ -38,7 +37,6 @@ class TestResolvedSyncDefaults:
         assert r.sync_flags == ["--flag-a", "--flag-b", "--flag-c"]
 
     def test_list_override_dedupes(self):
-        """Override items already in defaults don't duplicate."""
         r = resolved_sync_defaults(self._defaults(), {"sync_flags": ["--flag-a", "--flag-c"]}, [])
         assert r.sync_flags == ["--flag-a", "--flag-b", "--flag-c"]
 
@@ -48,19 +46,17 @@ class TestResolvedSyncDefaults:
 
     def test_exclude_override_and_additional(self):
         r = resolved_sync_defaults(
-            self._defaults(),
-            {"exclude_patterns": ["*.bak"]},
-            ["archive/**"],
+            self._defaults(), {"exclude_patterns": ["*.bak"]}, ["archive/**"],
         )
         assert r.exclude_patterns == ["*.tmp", ".DS_Store", "*.bak", "archive/**"]
 
 
-# ── Artefact naming ───────────────────────────────────────────────────────────
+# ── Naming helpers ────────────────────────────────────────────────────────────
 
-def _drive(local_name="academy", id="0AM", cloud_name="ARC Academy", enabled=True) -> Drive:
+def _drive(local_name="academy") -> Drive:
     return Drive(
-        id=id, cloud_name=cloud_name, local_name=local_name,
-        enabled=enabled, overrides={}, description=None, status=None,  # type: ignore[arg-type]
+        id="0AM", cloud_name="ARC Academy", local_name=local_name,
+        enabled=True, overrides={}, description=None,
     )
 
 
@@ -81,15 +77,8 @@ class TestNaming:
 
 class TestCompilePlan:
     def test_plan_from_fixture(self, valid_dir):
-        main, _ = load_main(valid_dir / "arc.yml")
-        cloud, _ = load_cloud(valid_dir / "arc.cloud.yml")  # type: ignore[misc]
-        registry = merge(main, cloud)
-
-        plan = compile_plan(
-            registry=registry,
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
-        )
+        main, h = load_main(valid_dir / "arc.yml")
+        plan = compile_plan(registry=main, source_file=str(valid_dir / "arc.yml"), source_hash=h)
 
         # Two drives enabled -> 2 remotes, 2 dirs
         assert len(plan.rclone_remotes) == 2
@@ -103,95 +92,54 @@ class TestCompilePlan:
         assert disabled[0].name == "arc-global"
         assert disabled[0].env_vars is None
 
-    def test_disabled_drive_still_in_sync_instances(self, valid_dir):
-        main, _ = load_main(valid_dir / "arc.yml")
-        cloud, _ = load_cloud(valid_dir / "arc.cloud.yml")  # type: ignore[misc]
-        plan = compile_plan(
-            registry=merge(main, cloud),
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
-        )
-        # Disabled drive contributes to sync_instances but not rclone_remotes/local_directories
-        disabled_name = "arc-global"
-        assert any(i.name == disabled_name for i in plan.sync_instances)
+    def test_meta_has_singular_source_fields(self, valid_dir):
+        main, h = load_main(valid_dir / "arc.yml")
+        plan = compile_plan(registry=main, source_file="/path/to/arc.yml", source_hash="abc")
+        assert plan.source_file == "/path/to/arc.yml"
+        assert plan.source_hash == "abc"
+        assert plan.schema_version == "0.3"
+
+    def test_disabled_drive_omitted_from_remotes_and_dirs(self, valid_dir):
+        main, h = load_main(valid_dir / "arc.yml")
+        plan = compile_plan(registry=main, source_file="x", source_hash="y")
         assert not any(r.name == "drive_global" for r in plan.rclone_remotes)
         assert not any(d.path.endswith("/global") for d in plan.local_directories)
 
     def test_env_vars_populated(self, valid_dir):
-        main, _ = load_main(valid_dir / "arc.yml")
-        cloud, _ = load_cloud(valid_dir / "arc.cloud.yml")  # type: ignore[misc]
-        plan = compile_plan(
-            registry=merge(main, cloud),
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
-        )
+        main, h = load_main(valid_dir / "arc.yml")
+        plan = compile_plan(registry=main, source_file="x", source_hash="y")
         academy = next(i for i in plan.sync_instances if i.name == "arc-academy")
         assert academy.env_vars is not None
         assert academy.env_vars["RCLONE_USER"] == "rclone_arc"
         assert academy.env_vars["REMOTE_NAME"] == "drive_academy"
         assert academy.env_vars["LOCAL_DEST"] == "/mnt/raid/arc/drive/academy"
         assert "--fast-list" in academy.env_vars["SYNC_FLAGS"]
-        # additional_excludes in fixture is "archive/**"
         assert "--exclude=archive/**" in academy.env_vars["EXCLUDE_PATTERNS"]
 
     def test_sorted_output(self, valid_dir):
-        main, _ = load_main(valid_dir / "arc.yml")
-        cloud, _ = load_cloud(valid_dir / "arc.cloud.yml")  # type: ignore[misc]
-        plan = compile_plan(
-            registry=merge(main, cloud),
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
+        main, h = load_main(valid_dir / "arc.yml")
+        plan = compile_plan(registry=main, source_file="x", source_hash="y")
+        assert [r.name for r in plan.rclone_remotes] == sorted(r.name for r in plan.rclone_remotes)
+        assert [d.path for d in plan.local_directories] == sorted(
+            d.path for d in plan.local_directories
         )
-        remote_names = [r.name for r in plan.rclone_remotes]
-        assert remote_names == sorted(remote_names)
-        dir_paths = [d.path for d in plan.local_directories]
-        assert dir_paths == sorted(dir_paths)
-        instance_names = [i.name for i in plan.sync_instances]
-        assert instance_names == sorted(instance_names)
+        assert [i.name for i in plan.sync_instances] == sorted(
+            i.name for i in plan.sync_instances
+        )
 
     def test_null_platform_defaults_passthrough(self, valid_dir):
-        """Absent default_owner/group/mode -> null in compiled plan."""
-        main, _ = load_main(valid_dir / "arc.yml")
-        cloud, _ = load_cloud(valid_dir / "arc.cloud.yml")  # type: ignore[misc]
-        plan = compile_plan(
-            registry=merge(main, cloud),
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
-        )
+        main, h = load_main(valid_dir / "arc.yml")
+        plan = compile_plan(registry=main, source_file="x", source_hash="y")
         assert plan.platform.default_owner is None
         assert plan.platform.default_group is None
         assert plan.platform.default_mode is None
 
-    def test_empty_registry_empty_plan(self, valid_dir):
-        """No cloud.yml => zero drives => zero artefacts."""
-        main, _ = load_main(valid_dir / "arc.yml")
-        plan = compile_plan(
-            registry=merge(main, None),
-            source_paths={"main": "x", "cloud": ""},
-            source_hashes={"main": "a", "cloud": ""},
-        )
-        assert plan.rclone_remotes == []
-        assert plan.local_directories == []
-        assert plan.sync_instances == []
-
-    def test_determinism(self, valid_dir):
-        """Compiling twice produces the same artefact structure."""
-        main, _ = load_main(valid_dir / "arc.yml")
-        cloud, _ = load_cloud(valid_dir / "arc.cloud.yml")  # type: ignore[misc]
-        registry = merge(main, cloud)
-        plan1 = compile_plan(
-            registry=registry,
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
-        )
-        plan2 = compile_plan(
-            registry=registry,
-            source_paths={"main": "x", "cloud": "y"},
-            source_hashes={"main": "a", "cloud": "b"},
-        )
-        # Artefact lists identical (compiled_at differs by wall clock)
-        assert [r.name for r in plan1.rclone_remotes] == [r.name for r in plan2.rclone_remotes]
-        dirs1 = [d.path for d in plan1.local_directories]
-        dirs2 = [d.path for d in plan2.local_directories]
+    def test_determinism_of_structure(self, valid_dir):
+        main, h = load_main(valid_dir / "arc.yml")
+        p1 = compile_plan(registry=main, source_file="x", source_hash="y")
+        p2 = compile_plan(registry=main, source_file="x", source_hash="y")
+        assert [r.name for r in p1.rclone_remotes] == [r.name for r in p2.rclone_remotes]
+        dirs1 = [d.path for d in p1.local_directories]
+        dirs2 = [d.path for d in p2.local_directories]
         assert dirs1 == dirs2
-        assert [i.name for i in plan1.sync_instances] == [i.name for i in plan2.sync_instances]
+        assert [i.name for i in p1.sync_instances] == [i.name for i in p2.sync_instances]

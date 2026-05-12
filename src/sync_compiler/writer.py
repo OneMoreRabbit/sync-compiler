@@ -1,9 +1,9 @@
 """
-Atomic round-trip writeback for <org>.cloud.yml.
+Atomic write helpers for <org>.cloud.yml snapshots.
 
-Used by the `discover` command. ruamel.yaml preserves comments, key order, and
-formatting; the write is done via tempfile + os.replace so a crash mid-write
-cannot corrupt the registry.
+v0.3 simplification: the snapshot is fully tool-owned and regenerated each
+discover run. No round-trip preservation of human comments / formatting is
+needed — the file is treated as ephemeral output, like compiled_sync_plan_*.yml.
 """
 
 from __future__ import annotations
@@ -14,33 +14,39 @@ from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
-from ruamel.yaml.comments import CommentedMap, CommentedSeq
+from ruamel.yaml.compat import StringIO
 
 
 def _new_dumper() -> YAML:
     yaml = YAML()
-    yaml.preserve_quotes = True
+    yaml.default_flow_style = False
     yaml.indent(mapping=2, sequence=4, offset=2)
     yaml.width = 120  # type: ignore[assignment]
     return yaml
 
 
-def atomic_write_yaml(path: Path, doc: Any) -> None:
-    """Write `doc` to `path` atomically via tempfile + os.replace.
+def dump_yaml(data: Any) -> str:
+    """Serialise `data` to a YAML string with our standard formatting."""
+    yaml = _new_dumper()
+    stream = StringIO()
+    yaml.dump(data, stream)
+    return stream.getvalue()
 
-    The tempfile is created in the same directory as the target so the final
-    rename is a cheap, atomic same-filesystem operation. If any step fails,
-    the original file is untouched.
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` to `path` via tempfile + os.replace.
+
+    Tempfile lives in the same directory as the target so the final rename is
+    atomic on a single filesystem. Parent directory created if absent.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    yaml = _new_dumper()
 
     fd, tmpname = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            yaml.dump(doc, fh)
+            fh.write(text)
         os.replace(tmpname, path)
     except Exception:
         try:
@@ -50,21 +56,6 @@ def atomic_write_yaml(path: Path, doc: Any) -> None:
         raise
 
 
-def new_cloud_document(org: str, now_iso: str, editor: str) -> CommentedMap:
-    """Build a brand-new <org>.cloud.yml document when none exists yet.
-
-    Used by `discover` on first run.
-    """
-    doc = CommentedMap()
-    meta = CommentedMap()
-    meta["version"] = "0.2"
-    meta["stage"] = "beta"
-    meta["last_modified"] = now_iso
-    meta["last_modified_by"] = editor
-    meta["description"] = (
-        f"{org} cloud sync registry - drive inventory (maintained by sync-compile)"
-    )
-    doc["meta"] = meta
-    doc["org"] = org
-    doc["accounts"] = CommentedSeq()
-    return doc
+def atomic_write_yaml(path: Path, data: Any) -> None:
+    """Render `data` as YAML and atomic-write it to `path`."""
+    atomic_write_text(path, dump_yaml(data))
