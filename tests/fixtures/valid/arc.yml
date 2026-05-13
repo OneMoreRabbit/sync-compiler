@@ -1,8 +1,8 @@
-# Valid v0.3 fixture — ARC Power sync registry (sole source of truth)
+# Valid v0.4 fixture — ARC Power sync registry
 meta:
-  version: "0.3"
+  version: "0.4"
   stage: beta
-  last_modified: "2026-05-12"
+  last_modified: "2026-05-13"
   last_modified_by: "test"
   description: "ARC Power sync registry — test fixture"
 

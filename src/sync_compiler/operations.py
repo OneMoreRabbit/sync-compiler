@@ -1,8 +1,5 @@
 """
 High-level operations called by the CLI (and by a future GUI).
-
-Each operation returns a structured result object so callers can display
-or serialise the outcome without re-running logic.
 """
 
 from __future__ import annotations
@@ -19,6 +16,7 @@ from .compiler import CompiledPlan, compile_plan
 from .emitter import emit
 from .errors import RegistryLoadError
 from .models import (
+    AgentRegistry,
     RegistryMain,
     SnapshotAccount,
     SnapshotMeta,
@@ -29,11 +27,12 @@ from .registry import (
     ClassificationResult,
     ValidationResult,
     classify_drives,
+    validate_agent_sync,
     validate_registry,
 )
 from .writer import atomic_write_yaml, dump_yaml
 
-SCHEMA_VERSION = "0.3"
+SCHEMA_VERSION = "0.4"
 
 
 # ── Result objects ────────────────────────────────────────────────────────────
@@ -43,7 +42,10 @@ class LoadedRegistry:
     main: RegistryMain
     main_path: Path
     main_hash: str
-    snapshot_path: Path  # may not exist yet
+    snapshot_path: Path
+    agents: AgentRegistry | None
+    agents_path: Path | None
+    agents_hash: str | None
 
 
 @dataclass
@@ -64,23 +66,20 @@ class CompileResult:
 class DiscoverResult:
     loaded: LoadedRegistry
     classification: ClassificationResult
-    snapshot: SnapshotRegistry | None      # populated when classification ran
-    snapshot_yaml: str = ""                # serialised form for --dry-run preview
+    snapshot: SnapshotRegistry | None
+    snapshot_yaml: str = ""
     written: bool = False
     output_path: Path = field(default_factory=Path)
     message: str = ""
 
 
-# ── Provider factory (overridable in tests) ───────────────────────────────────
+# ── Provider factory ──────────────────────────────────────────────────────────
 
 class ProviderFactory(Protocol):
-    """Build a CloudProvider for a given registry. Replaced in tests with a mock."""
-
     def __call__(self, registry: RegistryMain) -> CloudProvider: ...
 
 
 def default_provider_factory(registry: RegistryMain) -> CloudProvider:
-    """Default factory: returns DriveProvider backed by the real rclone binary."""
     from .cloud import DriveProvider
     from .rclone import RcloneRunner
 
@@ -94,28 +93,41 @@ def default_provider_factory(registry: RegistryMain) -> CloudProvider:
 # ── Load ──────────────────────────────────────────────────────────────────────
 
 def load_registry(registry_dir: Path, org: str) -> LoadedRegistry:
-    """Load <org>.yml. Fails fast on v0.2 residue with a clear migration message."""
-    v02 = loader.detect_v02_residue(registry_dir, org)
-    if v02:
-        raise RegistryLoadError(v02)
+    """Load <org>.yml and (if present) agent_registry.yml. Fail fast on legacy layouts."""
+    legacy = loader.detect_legacy_residue(registry_dir, org)
+    if legacy:
+        raise RegistryLoadError(legacy)
 
     main_p = loader.main_path(registry_dir, org)
     main, main_hash = loader.load_main(main_p)
+
+    agents_p = loader.agent_registry_path(registry_dir)
+    agents_tuple = loader.load_agent_registry(agents_p)
+    if agents_tuple is not None:
+        agents, agents_hash = agents_tuple
+        agents_path = agents_p
+    else:
+        agents, agents_hash, agents_path = None, None, None
 
     return LoadedRegistry(
         main=main,
         main_path=main_p,
         main_hash=main_hash,
         snapshot_path=loader.snapshot_path(registry_dir, org),
+        agents=agents,
+        agents_path=agents_path,
+        agents_hash=agents_hash,
     )
 
 
 # ── Validate ──────────────────────────────────────────────────────────────────
 
 def validate(registry_dir: Path, org: str) -> ValidateResult:
-    """Schema + cross-reference validation. Offline."""
     loaded = load_registry(registry_dir, org)
     result = validate_registry(loaded.main, loaded.main_path)
+    agent_result = validate_agent_sync(loaded.agents, loaded.main.org, loaded.agents_path)
+    result.errors.extend(agent_result.errors)
+    result.warnings.extend(agent_result.warnings)
     return ValidateResult(loaded=loaded, validation=result)
 
 
@@ -132,9 +144,11 @@ def compile_for_org(
     fmt: str = "yaml",
     check_only: bool = False,
 ) -> CompileResult:
-    """Validate and (unless check_only) emit the compiled plan."""
     loaded = load_registry(registry_dir, org)
     result = validate_registry(loaded.main, loaded.main_path)
+    agent_result = validate_agent_sync(loaded.agents, loaded.main.org, loaded.agents_path)
+    result.errors.extend(agent_result.errors)
+    result.warnings.extend(agent_result.warnings)
 
     if not result.ok:
         return CompileResult(loaded=loaded, validation=result, plan=None, output_path=None)
@@ -143,6 +157,9 @@ def compile_for_org(
         registry=loaded.main,
         source_file=str(loaded.main_path),
         source_hash=loaded.main_hash,
+        agent_registry=loaded.agents,
+        agent_registry_path=str(loaded.agents_path) if loaded.agents_path else None,
+        agent_registry_hash=loaded.agents_hash,
     )
 
     if check_only:
@@ -153,13 +170,12 @@ def compile_for_org(
     return CompileResult(loaded=loaded, validation=result, plan=plan, output_path=out)
 
 
-# ── Discover ──────────────────────────────────────────────────────────────────
+# ── Discover (unchanged from v0.3) ────────────────────────────────────────────
 
 def _build_snapshot(
     loaded: LoadedRegistry,
     classification: ClassificationResult,
 ) -> SnapshotRegistry:
-    """Wrap a ClassificationResult into a SnapshotRegistry ready for serialisation."""
     return SnapshotRegistry(
         meta=SnapshotMeta(
             version=SCHEMA_VERSION,
@@ -182,7 +198,6 @@ def _build_snapshot(
 
 
 def _snapshot_to_dict(snapshot: SnapshotRegistry) -> dict:
-    """Stable dict shape for YAML emission."""
     return {
         "meta": snapshot.meta.model_dump(exclude_none=True),
         "org": snapshot.org,
@@ -203,7 +218,6 @@ def _classify_all(
     loaded: LoadedRegistry,
     provider: CloudProvider,
 ) -> ClassificationResult:
-    """Run discover's classification across every account in <org>.yml."""
     result = ClassificationResult()
     existing_local_names: set[str] = {
         d.local_name for account in loaded.main.accounts for d in account.drives
@@ -226,11 +240,6 @@ def discover_classify(
     org: str,
     provider_factory: ProviderFactory | None = None,
 ) -> DiscoverResult:
-    """Phase 1 of discover: load + query cloud + classify + serialise to string.
-
-    Does NOT write to disk. The CLI uses this for both --dry-run and the
-    pre-confirmation phase of an interactive discover.
-    """
     loaded = load_registry(registry_dir, org)
     factory = provider_factory or default_provider_factory
     provider = factory(loaded.main)
@@ -254,10 +263,6 @@ def discover_write(
     result: DiscoverResult,
     output: Path | None = None,
 ) -> DiscoverResult:
-    """Phase 2 of discover: atomic-write the snapshot to disk.
-
-    Caller is responsible for any interactive confirmation between phases.
-    """
     out = output or result.output_path
     if result.snapshot is None:
         raise RuntimeError("discover_write called without classification")
@@ -272,8 +277,6 @@ def discover_write(
         message="written",
     )
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
     "CompileResult",

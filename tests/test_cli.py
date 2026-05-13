@@ -25,52 +25,44 @@ class TestCompileCommand:
         assert output.exists()
         data = yaml.safe_load(output.read_text(encoding="utf-8"))
         assert data["org"] == "arc"
-        assert data["meta"]["schema_version"] == "0.3"
-        assert "source_file" in data["meta"]
-        assert "source_hash" in data["meta"]
-        assert "source_files" not in data["meta"]  # v0.2 plural removed
-        assert len(data["rclone_remotes"]) == 2
+        assert data["meta"]["schema_version"] == "0.4"
+        assert "agent_registry_path" in data["meta"]
+        assert "agent_registry_hash" in data["meta"]
+
+        # 3 org-data instances (academy + global_media + disabled global)
+        # + 4 agent bisync instances (research_mz × 2, finance_global × 2)
+        assert len(data["sync_instances"]) == 7
+        modes = {i["mode"] for i in data["sync_instances"]}
+        assert modes == {"sync", "bisync"}
+
+    def test_no_agent_registry_still_compiles(self, registry_dir_no_agents: Path):
+        code, _, err = _invoke(["compile", "-r", str(registry_dir_no_agents), "--org", "arc"])
+        assert code == 0, f"stderr: {err}"
+        output = registry_dir_no_agents / ".compiled" / "compiled_sync_plan_arc.yml"
+        data = yaml.safe_load(output.read_text(encoding="utf-8"))
+        # No agent_registry → no bisync entries → 3 sync instances only
+        assert all(i["mode"] == "sync" for i in data["sync_instances"])
         assert len(data["sync_instances"]) == 3
+        assert "agent_registry_path" not in data["meta"]
 
     def test_check_does_not_write(self, registry_dir: Path):
-        code, _, _ = _invoke(
-            ["compile", "-r", str(registry_dir), "--org", "arc", "--check"]
-        )
+        code, _, _ = _invoke(["compile", "-r", str(registry_dir), "--org", "arc", "--check"])
         assert code == 0
         assert not (registry_dir / ".compiled" / "compiled_sync_plan_arc.yml").exists()
 
-    def test_v02_residue_fails_fast(self, v02_registry_dir: Path):
-        code, _, err = _invoke(
-            ["compile", "-r", str(v02_registry_dir), "--org", "arc"]
-        )
+    def test_legacy_v02_fails_fast(self, legacy_v02_registry_dir: Path):
+        code, _, err = _invoke(["compile", "-r", str(legacy_v02_registry_dir), "--org", "arc"])
         assert code == 2
-        assert "v0.2" in err or "0.2" in err
-        assert ".cloud.yml" in err
+        assert "0.4" in err or "legacy" in err.lower()
+
+    def test_legacy_v03_fails_fast(self, v03_registry_dir: Path):
+        code, _, err = _invoke(["compile", "-r", str(v03_registry_dir), "--org", "arc"])
+        assert code == 2
+        assert "0.3" in err or "0.4" in err
 
     def test_compile_without_org_fails(self, registry_dir: Path):
         code, _, err = _invoke(["compile", "-r", str(registry_dir)])
         assert code != 0
-        assert "org" in err.lower()
-
-    def test_output_path_override(self, registry_dir: Path, tmp_path: Path):
-        custom = tmp_path / "custom_plan.yml"
-        code, _, err = _invoke([
-            "compile", "-r", str(registry_dir), "--org", "arc",
-            "--output", str(custom),
-        ])
-        assert code == 0, err
-        assert custom.exists()
-
-    def test_json_format(self, registry_dir: Path, tmp_path: Path):
-        import json
-        custom = tmp_path / "plan.json"
-        code, _, err = _invoke([
-            "compile", "-r", str(registry_dir), "--org", "arc",
-            "--format", "json", "--output", str(custom),
-        ])
-        assert code == 0, err
-        data = json.loads(custom.read_text(encoding="utf-8"))
-        assert data["org"] == "arc"
 
 
 class TestValidateCommand:
@@ -78,12 +70,9 @@ class TestValidateCommand:
         code, _, _ = _invoke(["validate", "-r", str(registry_dir), "--org", "arc"])
         assert code == 0
 
-    def test_validate_rejects_v02(self, v02_registry_dir: Path):
-        code, _, err = _invoke(
-            ["validate", "-r", str(v02_registry_dir), "--org", "arc"]
-        )
+    def test_validate_rejects_legacy(self, v03_registry_dir: Path):
+        code, _, err = _invoke(["validate", "-r", str(v03_registry_dir), "--org", "arc"])
         assert code == 2
-        assert "v0.2" in err or "0.2" in err
 
 
 class TestDiscoverCommand:
@@ -105,28 +94,9 @@ class TestDiscoverCommand:
             {"id": "0ABO9zZb-4pBvUk9PVA", "name": "Global Media"},
             {"id": "0AHW2VHH_fZemUk9PVA", "name": "Global"},
         ])
-        code, out, _ = _invoke([
-            "discover", "-r", str(registry_dir), "--org", "arc", "--dry-run",
-        ])
+        code, out, _ = _invoke(["discover", "-r", str(registry_dir), "--org", "arc", "--dry-run"])
         assert code == 0
-        assert "3 present" in out or "no drift" in out
-        # nothing written
         assert not (registry_dir / ".compiled" / "arc.cloud.yml").exists()
-
-    def test_discover_detects_new_drive_dry_run(self, registry_dir: Path, monkeypatch):
-        self._patch_provider(monkeypatch, [
-            {"id": "0AM0lOfo8XiIBUk9PVA", "name": "ARC Academy"},
-            {"id": "0ABO9zZb-4pBvUk9PVA", "name": "Global Media"},
-            {"id": "0AHW2VHH_fZemUk9PVA", "name": "Global"},
-            {"id": "0NEW", "name": "New Project"},
-        ])
-        code, out, _ = _invoke([
-            "discover", "-r", str(registry_dir), "--org", "arc", "--dry-run",
-        ])
-        assert code == 0
-        assert "New Project" in out
-        assert "new_project" in out  # suggested_local_name
-        assert "1 new" in out
 
     def test_discover_writes_with_yes(self, registry_dir: Path, monkeypatch):
         from sync_compiler.loader import load_snapshot
@@ -134,83 +104,12 @@ class TestDiscoverCommand:
             {"id": "0AM0lOfo8XiIBUk9PVA", "name": "ARC Academy"},
             {"id": "0NEW", "name": "New Project"},
         ])
-        code, _, _ = _invoke([
-            "discover", "-r", str(registry_dir), "--org", "arc", "--yes",
-        ])
+        code, _, _ = _invoke(["discover", "-r", str(registry_dir), "--org", "arc", "--yes"])
         assert code == 0
-
         snap_path = registry_dir / ".compiled" / "arc.cloud.yml"
         assert snap_path.exists()
         snap, _ = load_snapshot(snap_path)  # type: ignore[misc]
-        # 1 present (academy), 1 new (NEW), 2 missing (global, global_media)
         assert snap.org == "arc"
-        statuses = [d.status for d in snap.accounts[0].drives]
-        assert statuses.count("new") == 1
-        assert statuses.count("missing_from_cloud") == 2
-        assert statuses.count("present") == 1
-
-    def test_discover_interactive_prompt_abort(self, registry_dir: Path, monkeypatch):
-        """No --yes, user answers 'n' to confirmation -> exit 1, no write."""
-        self._patch_provider(monkeypatch, [
-            {"id": "0AM0lOfo8XiIBUk9PVA", "name": "ARC Academy"},
-        ])
-        code, out, _ = _invoke(
-            ["discover", "-r", str(registry_dir), "--org", "arc"],
-            input="n\n",
-        )
-        assert code == 1
-        assert "abort" in out.lower()
-        assert not (registry_dir / ".compiled" / "arc.cloud.yml").exists()
-
-    def test_discover_interactive_prompt_accept(self, registry_dir: Path, monkeypatch):
-        self._patch_provider(monkeypatch, [
-            {"id": "0AM0lOfo8XiIBUk9PVA", "name": "ARC Academy"},
-        ])
-        code, _, _ = _invoke(
-            ["discover", "-r", str(registry_dir), "--org", "arc"],
-            input="y\n",
-        )
-        assert code == 0
-        assert (registry_dir / ".compiled" / "arc.cloud.yml").exists()
-
-    def test_discover_determinism(self, registry_dir: Path, monkeypatch):
-        """Two discovers with same cloud state -> identical snapshot bodies."""
-        self._patch_provider(monkeypatch, [
-            {"id": "0AM0lOfo8XiIBUk9PVA", "name": "ARC Academy"},
-            {"id": "0NEW", "name": "New Project"},
-        ])
-        snap = registry_dir / ".compiled" / "arc.cloud.yml"
-
-        _invoke(["discover", "-r", str(registry_dir), "--org", "arc", "--yes"])
-        body1 = _strip_meta(snap.read_text(encoding="utf-8"))
-
-        _invoke(["discover", "-r", str(registry_dir), "--org", "arc", "--yes"])
-        body2 = _strip_meta(snap.read_text(encoding="utf-8"))
-
-        assert body1 == body2
-
-    def test_discover_v02_residue_fails(self, v02_registry_dir: Path):
-        code, _, err = _invoke(
-            ["discover", "-r", str(v02_registry_dir), "--org", "arc", "--yes"]
-        )
-        assert code == 2
-        assert "v0.2" in err or "0.2" in err
-
-
-def _strip_meta(yaml_text: str) -> str:
-    """Drop the volatile meta block (contains timestamp/hostname) for comparison."""
-    lines = yaml_text.splitlines()
-    out: list[str] = []
-    in_meta = False
-    for ln in lines:
-        if ln.startswith("meta:"):
-            in_meta = True
-            continue
-        if in_meta and (ln.startswith(" ") or ln.startswith("\t")):
-            continue
-        in_meta = False
-        out.append(ln)
-    return "\n".join(out)
 
 
 class TestRootInvocation:

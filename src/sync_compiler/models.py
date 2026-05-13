@@ -1,12 +1,17 @@
 """
-Pydantic models for sync-compiler v0.3.
+Pydantic models for sync-compiler v0.4.
 
-Schema v0.3:
-  <org>.yml        ->  RegistryMain      (sole source of truth — drives nested under accounts)
-  <org>.cloud.yml  ->  SnapshotRegistry  (tool-written discovery snapshot in .compiled/)
+v0.4 changes:
+  - sync_instances gains explicit `mode: sync | bisync`.
+  - New input `agent_registry.yml` (read by sync-compile for agent-share bisync).
+  - Top-level agents are agents of a regular org named `top` — no special case.
 
-Path fields are stored as plain strings (never pathlib.Path) — they refer to
-Linux target paths and the tool runs on both Windows (dev) and Linux (prod).
+Schema v0.4:
+  <org>.yml             ->  RegistryMain      (sole source of truth for sync drives)
+  <org>.cloud.yml       ->  SnapshotRegistry  (tool-written discovery snapshot, .compiled/)
+  agent_registry.yml    ->  AgentRegistry     (read for share_class.org + cloud_sync)
+
+Path fields are plain strings (never pathlib.Path) — Linux paths on a Windows dev host.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ LINUX_USERNAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 ORG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 REMOTE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 LOCAL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+SUB_AGENT_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 OCTAL_MODE_RE = re.compile(r"^[0-7]{3,5}$")
 
 
@@ -34,12 +40,12 @@ class Meta(BaseModel):
     description: str | None = None
 
 
-# ── <org>.yml — sole human-edited source of truth ─────────────────────────────
+# ── <org>.yml — sync drives source of truth ───────────────────────────────────
 
 class Drive(BaseModel):
-    """A drive declared under an account in <org>.yml.
+    """A cloud drive declared under an account in <org>.yml.
 
-    `enabled` lives here (not in the snapshot) — this is the source of truth.
+    `enabled` lives here — this is the source of truth.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -85,7 +91,7 @@ class Platform(BaseModel):
         if not LINUX_USERNAME_RE.match(v):
             raise ValueError(
                 f"'{v}' is not a valid Linux username "
-                "(lowercase, alphanumeric + underscores, <= 32 chars, must start with a letter)"
+                "(lowercase alphanumeric + underscores, <= 32 chars)"
             )
         return v
 
@@ -104,14 +110,12 @@ class Platform(BaseModel):
         if v is None:
             return v
         if not OCTAL_MODE_RE.match(v):
-            raise ValueError(
-                f"'{v}' is not a valid octal mode string (e.g. '02770', '0770')"
-            )
+            raise ValueError(f"'{v}' is not a valid octal mode (e.g. '02770')")
         return v
 
 
 class Auth(BaseModel):
-    """Provider auth configuration. v0.3: service_account (oauth deferred)."""
+    """Provider auth — v0.4: service_account only (oauth deferred)."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -141,7 +145,7 @@ class SyncDefaults(BaseModel):
         if not v:
             raise ValueError("local_subdir must not be empty")
         if v.startswith("/"):
-            raise ValueError("local_subdir must be relative (not starting with '/')")
+            raise ValueError("local_subdir must be relative")
         if ".." in v.split("/"):
             raise ValueError("local_subdir must not contain '..'")
         return v
@@ -177,7 +181,7 @@ class Account(BaseModel):
 
 
 class RcloneUser(BaseModel):
-    """Entry in rclone_users[] — consumed by Ansible, validated lightly by sync-compile."""
+    """Entry in rclone_users[] — consumed by Ansible, lightly validated."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -189,10 +193,7 @@ class RcloneUser(BaseModel):
 
 
 class RegistryMain(BaseModel):
-    """The human-owned <org>.yml file (v0.3) — sole source of truth.
-
-    Drives are nested under each account in `accounts[].drives`.
-    """
+    """<org>.yml v0.4. Top-level agents live under org `top`; no special case."""
 
     meta: Meta
     org: str
@@ -215,25 +216,16 @@ class RegistryMain(BaseModel):
         names = [a.remote_name for a in v]
         dupes = {n for n in names if names.count(n) > 1}
         if dupes:
-            raise ValueError(f"duplicate remote_name(s) in accounts: {sorted(dupes)}")
+            raise ValueError(f"duplicate remote_name(s): {sorted(dupes)}")
         return v
 
 
-# ── <org>.cloud.yml — pure discovery snapshot ─────────────────────────────────
+# ── <org>.cloud.yml — discovery snapshot (unchanged v0.3 → v0.4 shape) ────────
 
 DriveStatus = Literal["new", "present", "renamed", "missing_from_cloud"]
 
 
 class SnapshotDrive(BaseModel):
-    """A drive entry in the discovery snapshot.
-
-    Status-specific fields:
-      new                -> suggested_local_name set
-      renamed            -> cloud_name_was + cloud_name_now set
-      missing_from_cloud -> cloud_name reflects last-known value from <org>.yml
-      present            -> cloud_name matches <org>.yml exactly
-    """
-
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -245,15 +237,11 @@ class SnapshotDrive(BaseModel):
 
 
 class SnapshotAccount(BaseModel):
-    """An account in the snapshot — just the remote_name and drive inventory."""
-
     remote_name: str
     drives: list[SnapshotDrive] = Field(default_factory=list)
 
 
 class SnapshotMeta(BaseModel):
-    """Meta block of the snapshot — adds source-file hash for traceability."""
-
     version: str
     stage: str | None = None
     generated_at: str
@@ -264,8 +252,6 @@ class SnapshotMeta(BaseModel):
 
 
 class SnapshotRegistry(BaseModel):
-    """The tool-owned <org>.cloud.yml — pure snapshot, never authoritative."""
-
     meta: SnapshotMeta
     org: str
     accounts: list[SnapshotAccount] = Field(default_factory=list)
@@ -278,7 +264,122 @@ class SnapshotRegistry(BaseModel):
         return v
 
 
-# ── Compiled plan (output dataclasses, plain structs) ─────────────────────────
+# ── agent_registry.yml — sync-compile reads share_class + cloud_sync ─────────
+
+ConflictPolicy = Literal["newer", "suffix"]
+BisyncSurfaceKey = Literal["scratch", "memory"]
+
+
+class ShareClass(BaseModel):
+    """An agent's home classification. Required if the agent has share-related fields."""
+
+    model_config = ConfigDict(extra="allow")  # rbac-compile may add fields
+
+    org: str
+    grade: int
+    vertical: str
+    scope: str
+
+    @field_validator("org")
+    @classmethod
+    def org_valid(cls, v: str) -> str:
+        if not ORG_KEY_RE.match(v):
+            raise ValueError(f"'{v}' is not a valid org key")
+        return v
+
+
+class BisyncSurface(BaseModel):
+    """Bisync config for one surface (scratch or memory)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    remote: str | None = None
+    conflict_policy: ConflictPolicy = "newer"
+    schedule: str = "*:0/1"
+
+    @field_validator("remote")
+    @classmethod
+    def remote_format(cls, v: str | None) -> str | None:
+        if v is not None and ":" not in v:
+            raise ValueError(
+                f"remote must include a ':' separator (e.g. 'remote:path/'): got '{v}'"
+            )
+        return v
+
+
+class AgentCloudSync(BaseModel):
+    """Bisync config block on an agent. Extra surface keys are tolerated (warn at validate)."""
+
+    model_config = ConfigDict(extra="allow")  # to let sessions/configs through for warn
+
+    scratch: BisyncSurface | None = None
+    memory: BisyncSurface | None = None
+
+
+class AgentShares(BaseModel):
+    """Optional per-surface path overrides for an agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configs: str | None = None
+    memory: str | None = None
+    sessions: str | None = None
+    scratch: str | None = None
+
+
+class AgentRecord(BaseModel):
+    """Lightweight agent view for sync-compile.
+
+    Fields we don't care about (`access`, `description`, `app`, `local_user`, etc.)
+    are tolerated via extra=allow — rbac-compile owns them.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    share_class: ShareClass | None = None
+    sub_agents: list[str] = Field(default_factory=list)
+    shares: AgentShares | None = None
+    cloud_sync: AgentCloudSync | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_valid(cls, v: str) -> str:
+        if not LINUX_USERNAME_RE.match(v):
+            raise ValueError(f"'{v}' is not a valid Linux username")
+        return v
+
+    @field_validator("sub_agents")
+    @classmethod
+    def sub_agents_valid(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        for name in v:
+            if not SUB_AGENT_RE.match(name):
+                raise ValueError(
+                    f"sub_agent '{name}' invalid (lowercase alphanumeric + underscores)"
+                )
+            if name == "main":
+                raise ValueError("sub_agent 'main' is reserved")
+            if name in seen:
+                raise ValueError(f"duplicate sub_agent '{name}'")
+            seen.add(name)
+        return v
+
+
+class AgentRegistry(BaseModel):
+    """The agent_registry.yml file. sync-compile reads it for share_class + cloud_sync."""
+
+    model_config = ConfigDict(extra="allow")
+
+    meta: Meta
+    agents: list[AgentRecord] = Field(default_factory=list)
+
+
+# ── Compiled plan (output dataclasses) ────────────────────────────────────────
+
+SyncMode = Literal["sync", "bisync"]
+
 
 @dataclass
 class RcloneRemote:
@@ -299,6 +400,7 @@ class LocalDirectory:
 class SyncInstance:
     name: str
     enabled: bool
+    mode: SyncMode = "sync"
     env_file_path: str | None = None
     env_vars: dict[str, str] | None = None
     timer_override_path: str | None = None
@@ -321,6 +423,8 @@ class CompiledPlan:
     schema_version: str
     source_file: str
     source_hash: str
+    agent_registry_path: str | None
+    agent_registry_hash: str | None
     org: str
     platform: PlatformOut
     rclone_remotes: list[RcloneRemote] = field(default_factory=list)

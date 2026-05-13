@@ -1,0 +1,68 @@
+# Valid v0.4 fixture — agent registry with two arc agents (one bisync, one not)
+meta:
+  version: "0.4"
+  stage: beta
+  last_modified: "2026-05-13"
+  last_modified_by: "test"
+  description: "Test agent registry"
+
+agents:
+  # Agent with scratch bisync (default), no memory bisync (default off)
+  - name: agent_arc_research_mz
+    description: "ARC research, Mozambique only"
+    access:
+      - {org: arc, grade: 3, vertical: tech, scope: mz}
+    share_class:
+      org: arc
+      grade: 3
+      vertical: tech
+      scope: mz
+    sub_agents:
+      - literature_review
+      - fact_check
+    cloud_sync:
+      scratch:
+        enabled: true
+        remote: drive_research_mz:Agents/research_mz/scratch
+        conflict_policy: newer
+        schedule: "*:0/1"
+      memory:
+        enabled: false
+        remote: drive_research_mz:Agents/research_mz/memory
+
+  # Agent with both scratch + memory bisync, custom conflict_policy
+  - name: agent_arc_finance_global
+    share_class:
+      org: arc
+      grade: 2
+      vertical: finance
+      scope: global
+    cloud_sync:
+      scratch:
+        enabled: true
+        remote: drive_finance:Agents/finance/scratch
+        conflict_policy: suffix
+        schedule: "*:0/2"
+      memory:
+        enabled: true
+        remote: drive_finance:Agents/finance/memory
+
+  # Agent with no cloud_sync at all (should produce no bisync instances)
+  - name: agent_arc_quiet
+    share_class:
+      org: arc
+      grade: 5
+      vertical: ops
+      scope: global
+
+  # Agent of a different org (should not appear in arc's compiled plan)
+  - name: agent_cpf_advisory
+    share_class:
+      org: cpf
+      grade: 2
+      vertical: advisory
+      scope: uk
+    cloud_sync:
+      scratch:
+        enabled: true
+        remote: drive_cpf:Agents/cpf_advisory/scratch

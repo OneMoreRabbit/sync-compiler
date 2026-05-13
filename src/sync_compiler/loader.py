@@ -1,12 +1,13 @@
 """
-Loads the v0.3 sync registry from disk.
+Loads the v0.4 sync registry from disk.
 
-Single source of truth:  <registry-dir>/sync/<org>.yml         -> RegistryMain
-Discovery snapshot:       <registry-dir>/.compiled/<org>.cloud.yml -> SnapshotRegistry
+  <registry-dir>/sync/<org>.yml         -> RegistryMain
+  <registry-dir>/.compiled/<org>.cloud.yml -> SnapshotRegistry
+  <registry-dir>/agent_registry.yml     -> AgentRegistry (optional input for compile)
 
-v0.2 layout detection:
-  - meta.version == "0.2" on <org>.yml             -> fail with migration instructions
-  - sync/<org>.cloud.yml present (v0.2 location)   -> fail with migration instructions
+Fail-fast detection:
+  - sync/<org>.cloud.yml exists (v0.2 layout) → fail with migration message
+  - <org>.yml `meta.version` in {"0.2", "0.3"}  → fail with migration message
 """
 
 from __future__ import annotations
@@ -19,23 +20,19 @@ from ruamel.yaml import YAML
 from ruamel.yaml.constructor import DuplicateKeyError
 
 from .errors import RegistryLoadError
-from .models import RegistryMain, SnapshotRegistry
+from .models import AgentRegistry, RegistryMain, SnapshotRegistry
 
-SUPPORTED_SCHEMA_VERSION = "0.3"
+SUPPORTED_SCHEMA_VERSION = "0.4"
 
-V02_MIGRATION_MESSAGE = (
-    "detected sync-compile v0.2 registry layout. "
-    "v0.3 requires drives to live in <org>.yml under each account; the cloud.yml "
-    "becomes a pure discovery snapshot in .compiled/.\n\n"
+LEGACY_MIGRATION_MESSAGE = (
+    "detected legacy sync-compile registry layout (v0.2 or v0.3).\n"
+    "v0.4 requires meta.version: \"0.4\" on sync/<org>.yml and agent_registry.yml.\n\n"
     "To migrate manually:\n"
-    "  1. For each drive in sync/<org>.cloud.yml you want active:\n"
-    "       copy the drive entry under the matching account in sync/<org>.yml\n"
-    "       under a new `drives:` key.\n"
-    "  2. Set `enabled: true` on each drive you want active.\n"
-    "  3. Bump `meta.version: \"0.3\"` in sync/<org>.yml.\n"
-    "  4. Delete sync/<org>.cloud.yml (it now lives in .compiled/ as a snapshot,\n"
-    "     written by `sync-compile discover`).\n"
-    "  5. Re-run: sync-compile compile --org <name>"
+    "  1. If sync/<org>.cloud.yml exists, delete it. v0.3+ snapshots live in .compiled/.\n"
+    "  2. Bump meta.version: \"0.4\" in sync/<org>.yml and in agent_registry.yml.\n"
+    "  3. Optional: add `share_class` and/or `cloud_sync` blocks to agents in \n"
+    "     agent_registry.yml to opt into agent-share bisync.\n"
+    "  4. Re-run: sync-compile compile --org <name>."
 )
 
 
@@ -46,13 +43,16 @@ def main_path(registry_dir: Path, org: str) -> Path:
 
 
 def snapshot_path(registry_dir: Path, org: str) -> Path:
-    """v0.3 snapshot location: .compiled/<org>.cloud.yml."""
     return registry_dir / ".compiled" / f"{org}.cloud.yml"
 
 
 def legacy_v02_cloud_path(registry_dir: Path, org: str) -> Path:
     """v0.2 cloud.yml location — checked only for fail-fast detection."""
     return registry_dir / "sync" / f"{org}.cloud.yml"
+
+
+def agent_registry_path(registry_dir: Path) -> Path:
+    return registry_dir / "agent_registry.yml"
 
 
 # ── YAML I/O ──────────────────────────────────────────────────────────────────
@@ -93,24 +93,22 @@ def _parse(content: bytes, path: Path) -> Any:
     return data
 
 
-# ── v0.2 fail-fast detection ──────────────────────────────────────────────────
+# ── Legacy fail-fast detection ────────────────────────────────────────────────
 
-def detect_v02_residue(registry_dir: Path, org: str) -> str | None:
-    """Return an error message if v0.2 artefacts are present, else None.
+def detect_legacy_residue(registry_dir: Path, org: str) -> str | None:
+    """Return an error message if v0.2/v0.3 artefacts are present, else None.
 
-    Two signals trigger detection:
-      (a) sync/<org>.cloud.yml exists (v0.2 location — should be gone in v0.3).
-      (b) <org>.yml's meta.version is exactly "0.2".
-
-    Both are caught so the operator gets a clear message regardless of which
-    half of the migration they've started.
+    Three signals trigger detection:
+      (a) sync/<org>.cloud.yml exists (v0.2 location — should be gone).
+      (b) <org>.yml's meta.version is "0.2" or "0.3".
+      (c) agent_registry.yml's meta.version is "0.2" or "0.3" (caught at agent load time too).
     """
     legacy_cloud = legacy_v02_cloud_path(registry_dir, org)
     if legacy_cloud.exists():
         return (
-            f"{V02_MIGRATION_MESSAGE}\n\n"
-            f"Detected: {legacy_cloud} (this file should not exist in v0.3 — "
-            f"delete it after migrating drives into {main_path(registry_dir, org)})."
+            f"{LEGACY_MIGRATION_MESSAGE}\n\n"
+            f"Detected: {legacy_cloud} (should not exist in v0.4 — "
+            f"delete after confirming snapshots live in .compiled/)."
         )
 
     main_p = main_path(registry_dir, org)
@@ -120,14 +118,12 @@ def detect_v02_residue(registry_dir: Path, org: str) -> str | None:
             data = _parse(content, main_p)
             meta = data.get("meta", {}) if isinstance(data, dict) else {}
             version = meta.get("version") if isinstance(meta, dict) else None
-            if version == "0.2":
+            if version in ("0.2", "0.3"):
                 return (
-                    f"{V02_MIGRATION_MESSAGE}\n\n"
-                    f"Detected: {main_p} has meta.version: \"0.2\". Bump to \"0.3\" "
-                    "after adding `drives:` lists under each account."
+                    f"{LEGACY_MIGRATION_MESSAGE}\n\n"
+                    f"Detected: {main_p} has meta.version: \"{version}\". Bump to \"0.4\"."
                 )
         except RegistryLoadError:
-            # parse errors get raised normally by load_main downstream
             pass
 
     return None
@@ -138,7 +134,7 @@ def detect_v02_residue(registry_dir: Path, org: str) -> str | None:
 def load_main(path: Path) -> tuple[RegistryMain, str]:
     """Load and validate <org>.yml. Required.
 
-    Caller is responsible for v0.2 detection (call detect_v02_residue first).
+    Caller should run detect_legacy_residue first for a friendlier error.
     """
     content, sha = _read(path)
     data = _parse(content, path)
@@ -150,19 +146,14 @@ def load_main(path: Path) -> tuple[RegistryMain, str]:
     if reg.meta.version != SUPPORTED_SCHEMA_VERSION:
         raise RegistryLoadError(
             f"{path}: meta.version is '{reg.meta.version}', expected "
-            f"'{SUPPORTED_SCHEMA_VERSION}'.\n{V02_MIGRATION_MESSAGE}"
+            f"'{SUPPORTED_SCHEMA_VERSION}'.\n{LEGACY_MIGRATION_MESSAGE}"
         )
 
     return reg, sha
 
 
 def load_snapshot(path: Path) -> tuple[SnapshotRegistry, str] | None:
-    """Load and validate a discovery snapshot. Returns None if the file is absent.
-
-    The snapshot is not required for any command — `compile` ignores it entirely,
-    and `discover` overwrites it. This loader exists for tooling that inspects
-    the snapshot (tests, future GUI).
-    """
+    """Load and validate a discovery snapshot. None if absent."""
     if not path.exists():
         return None
     content, sha = _read(path)
@@ -171,3 +162,27 @@ def load_snapshot(path: Path) -> tuple[SnapshotRegistry, str] | None:
         return SnapshotRegistry.model_validate(data), sha
     except Exception as exc:
         raise RegistryLoadError(f"{path}: schema error: {exc}") from exc
+
+
+def load_agent_registry(path: Path) -> tuple[AgentRegistry, str] | None:
+    """Load and validate agent_registry.yml. Returns None if absent.
+
+    sync-compile only reads fields it cares about; extra fields (consumed by
+    rbac-compile / other tools) are tolerated via extra=allow on the models.
+    """
+    if not path.exists():
+        return None
+    content, sha = _read(path)
+    data = _parse(content, path)
+    try:
+        reg = AgentRegistry.model_validate(data)
+    except Exception as exc:
+        raise RegistryLoadError(f"{path}: schema error: {exc}") from exc
+
+    if reg.meta.version != SUPPORTED_SCHEMA_VERSION:
+        raise RegistryLoadError(
+            f"{path}: meta.version is '{reg.meta.version}', expected "
+            f"'{SUPPORTED_SCHEMA_VERSION}'.\n{LEGACY_MIGRATION_MESSAGE}"
+        )
+
+    return reg, sha

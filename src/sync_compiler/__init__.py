@@ -1,5 +1,5 @@
 """
-sync_compiler v0.3 — public API.
+sync_compiler v0.4 — public API.
 
 Example:
     from pathlib import Path
@@ -9,8 +9,6 @@ Example:
     if not result.validation.ok:
         for err in result.validation.errors:
             print(f"ERROR: {err}")
-    else:
-        print(f"Wrote plan to {result.output_path}")
 """
 
 from .errors import (
@@ -22,13 +20,19 @@ from .errors import (
 )
 from .models import (
     Account,
+    AgentCloudSync,
+    AgentRecord,
+    AgentRegistry,
+    AgentShares,
     Auth,
+    BisyncSurface,
     CompiledPlan,
     Drive,
     LocalDirectory,
     Platform,
     RcloneRemote,
     RegistryMain,
+    ShareClass,
     SnapshotAccount,
     SnapshotDrive,
     SnapshotMeta,
@@ -52,16 +56,17 @@ from .registry import (
     ClassificationResult,
     ValidationResult,
     classify_drives,
+    resolve_surface_path,
     slugify,
     uniquify,
+    validate_agent_sync,
     validate_registry,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "__version__",
-    # Operations
     "compile_for_org",
     "discover_classify",
     "discover_write",
@@ -71,30 +76,35 @@ __all__ = [
     "DiscoverResult",
     "LoadedRegistry",
     "ValidateResult",
-    # Registry
     "AccountClassification",
     "ClassificationResult",
     "ValidationResult",
     "classify_drives",
+    "resolve_surface_path",
     "slugify",
     "uniquify",
+    "validate_agent_sync",
     "validate_registry",
-    # Models
     "Account",
+    "AgentCloudSync",
+    "AgentRecord",
+    "AgentRegistry",
+    "AgentShares",
     "Auth",
+    "BisyncSurface",
     "CompiledPlan",
     "Drive",
     "LocalDirectory",
     "Platform",
     "RcloneRemote",
     "RegistryMain",
+    "ShareClass",
     "SnapshotAccount",
     "SnapshotDrive",
     "SnapshotMeta",
     "SnapshotRegistry",
     "SyncDefaults",
     "SyncInstance",
-    # Errors
     "CloudAPIError",
     "CompilerInternalError",
     "RegistryError",

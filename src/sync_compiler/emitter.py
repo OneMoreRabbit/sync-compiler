@@ -1,8 +1,5 @@
 """
 Serialises a CompiledPlan to YAML or JSON via atomic write.
-
-The plan is already fully sorted and resolved by the compiler — emitter just
-serialises. Atomic via tempfile + os.replace.
 """
 
 from __future__ import annotations
@@ -16,15 +13,20 @@ from .writer import atomic_write_text, dump_yaml
 
 
 def plan_to_dict(plan: CompiledPlan) -> dict:
-    """Convert CompiledPlan to a nested dict matching the v0.3 schema."""
+    """Convert CompiledPlan to a nested dict (v0.4 shape)."""
+    meta: dict = {
+        "compiled_at": plan.compiled_at,
+        "compiler_version": plan.compiler_version,
+        "schema_version": plan.schema_version,
+        "source_file": plan.source_file,
+        "source_hash": plan.source_hash,
+    }
+    if plan.agent_registry_path is not None:
+        meta["agent_registry_path"] = plan.agent_registry_path
+        meta["agent_registry_hash"] = plan.agent_registry_hash
+
     return {
-        "meta": {
-            "compiled_at": plan.compiled_at,
-            "compiler_version": plan.compiler_version,
-            "schema_version": plan.schema_version,
-            "source_file": plan.source_file,
-            "source_hash": plan.source_hash,
-        },
+        "meta": meta,
         "org": plan.org,
         "platform": asdict(plan.platform),
         "rclone_remotes": [asdict(r) for r in plan.rclone_remotes],
@@ -34,8 +36,8 @@ def plan_to_dict(plan: CompiledPlan) -> dict:
 
 
 def _instance_to_dict(i: SyncInstance) -> dict:
-    """Emit SyncInstance; elide optional fields when the instance is disabled."""
-    d: dict = {"name": i.name, "enabled": i.enabled}
+    """Emit SyncInstance; mode always explicit; elide payload when disabled."""
+    d: dict = {"name": i.name, "enabled": i.enabled, "mode": i.mode}
     if i.enabled:
         d["env_file_path"] = i.env_file_path
         d["env_vars"] = dict(i.env_vars or {})
