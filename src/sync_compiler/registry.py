@@ -168,7 +168,8 @@ def _validate_rclone_users(
     main: RegistryMain, main_file: Path, result: ValidationResult
 ) -> None:
     users = {ru.user for ru in main.rclone_users}
-    user_remotes = {ru.remote_name for ru in main.rclone_users}
+    # remote_name is optional on RcloneUser (bisync-only orgs omit it) — drop None.
+    user_remotes = {ru.remote_name for ru in main.rclone_users if ru.remote_name}
 
     if main.platform.rclone_user not in users:
         result.error(

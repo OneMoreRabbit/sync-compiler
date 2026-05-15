@@ -66,3 +66,20 @@ agents:
       scratch:
         enabled: true
         remote: drive_cpf:Agents/cpf_advisory/scratch
+
+  # Top-level agent — home org is the `top` pseudo-org. Bisyncs to a
+  # personal remote configured outside platform-managed accounts.
+  - name: agent_oversight
+    description: "Cross-org oversight"
+    access:
+      - {org: arc, grade: 0, vertical: any, scope: global}
+      - {org: cpf, grade: 0, vertical: any, scope: global}
+    share_class:
+      org: top
+      grade: 0
+      vertical: any
+      scope: global
+    cloud_sync:
+      scratch:
+        enabled: true
+        remote: drive_ollie:Agents/oversight/scratch

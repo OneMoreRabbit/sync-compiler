@@ -1,0 +1,23 @@
+# Valid v0.4 fixture — `top` pseudo-org: bisync-only, no platform-managed accounts.
+# Top-level agents live here. Their surfaces bisync to manually-configured
+# personal remotes; there are no service-account cloud-sync drives.
+meta:
+  version: "0.4"
+  stage: beta
+  last_modified: "2026-05-15"
+  last_modified_by: "test"
+  description: "Top-level agents pseudo-org — test fixture"
+
+org: top
+
+# rclone user with no platform-managed remote (remote_name/provider omitted).
+rclone_users:
+  - user: rclone_top
+
+platform:
+  rclone_user: rclone_top
+  local_base: /mnt/raid/top
+  rclone_config: /var/lib/rclone_top/.config/rclone/rclone.conf
+
+# No accounts — bisync-only org.
+accounts: []

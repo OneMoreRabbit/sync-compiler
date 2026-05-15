@@ -22,11 +22,13 @@ def registry_dir(tmp_path: Path, valid_dir: Path) -> Path:
 
     Layout:
         <tmp_path>/sync/arc.yml
+        <tmp_path>/sync/top.yml      (accountless, bisync-only org)
         <tmp_path>/agent_registry.yml
     """
     sync = tmp_path / "sync"
     sync.mkdir(parents=True)
     shutil.copy(valid_dir / "arc.yml", sync / "arc.yml")
+    shutil.copy(valid_dir / "top.yml", sync / "top.yml")
     shutil.copy(valid_dir / "agent_registry.yml", tmp_path / "agent_registry.yml")
     return tmp_path
 

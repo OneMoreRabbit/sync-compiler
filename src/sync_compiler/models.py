@@ -181,13 +181,18 @@ class Account(BaseModel):
 
 
 class RcloneUser(BaseModel):
-    """Entry in rclone_users[] — consumed by Ansible, lightly validated."""
+    """Entry in rclone_users[] — consumed by Ansible, lightly validated.
+
+    `remote_name` and `provider` are optional: a bisync-only org (e.g. `top`)
+    has an rclone user with no platform-managed service-account remote — its
+    agents bisync to manually-configured personal remotes.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     user: str
-    remote_name: str
-    provider: str
+    remote_name: str | None = None
+    provider: str | None = None
     key_file: str | None = None
     impersonate: str | None = None
 
@@ -199,7 +204,7 @@ class RegistryMain(BaseModel):
     org: str
     rclone_users: list[RcloneUser] = Field(default_factory=list)
     platform: Platform
-    accounts: list[Account]
+    accounts: list[Account] = Field(default_factory=list)
 
     @field_validator("org")
     @classmethod
@@ -210,9 +215,10 @@ class RegistryMain(BaseModel):
 
     @field_validator("accounts")
     @classmethod
-    def accounts_nonempty_unique(cls, v: list[Account]) -> list[Account]:
-        if not v:
-            raise ValueError("accounts must not be empty")
+    def accounts_unique(cls, v: list[Account]) -> list[Account]:
+        # An empty accounts list is valid — a bisync-only org (e.g. `top`)
+        # has no platform-managed cloud-sync drives. remote_name uniqueness
+        # is still enforced when accounts are present.
         names = [a.remote_name for a in v]
         dupes = {n for n in names if names.count(n) > 1}
         if dupes:

@@ -64,6 +64,20 @@ class TestCompileCommand:
         code, _, err = _invoke(["compile", "-r", str(registry_dir)])
         assert code != 0
 
+    def test_accountless_top_org_compiles(self, registry_dir: Path):
+        """`sync-compile compile --org top` — bisync-only org, no accounts."""
+        code, out, err = _invoke(["compile", "-r", str(registry_dir), "--org", "top"])
+        assert code == 0, f"stderr: {err}"
+        output = registry_dir / ".compiled" / "compiled_sync_plan_top.yml"
+        assert output.exists()
+        data = yaml.safe_load(output.read_text(encoding="utf-8"))
+        assert data["org"] == "top"
+        assert data["rclone_remotes"] == []
+        assert data["local_directories"] == []
+        # Only the top-org agent's bisync instance.
+        assert len(data["sync_instances"]) == 1
+        assert data["sync_instances"][0]["mode"] == "bisync"
+
 
 class TestValidateCommand:
     def test_validate_passes(self, registry_dir: Path):

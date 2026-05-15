@@ -1,6 +1,6 @@
 [project]
 name = "sync-compiler"
-version = "0.4.0"
+version = "0.4.1"
 description = "Cloud sync configuration compiler for rclone-based multi-tenant fileserver"
 requires-python = ">=3.10"
 dependencies = [

@@ -192,7 +192,7 @@ def test_agent_registry_loads_fixture(valid_dir):
     result = load_agent_registry(valid_dir / "agent_registry.yml")
     assert result is not None
     reg, _ = result
-    assert len(reg.agents) == 4
+    assert len(reg.agents) == 5
     research = next(a for a in reg.agents if a.name == "agent_arc_research_mz")
     assert research.share_class is not None
     assert research.share_class.org == "arc"
@@ -210,6 +210,30 @@ def test_snapshot_loads_minimal():
         "accounts": [],
     })
     assert s.org == "arc"
+
+
+def test_accountless_org_loads(valid_dir):
+    """`top` is a bisync-only org — no accounts, rclone user with no remote."""
+    from sync_compiler.loader import load_main
+    main, _ = load_main(valid_dir / "top.yml")
+    assert main.org == "top"
+    assert main.accounts == []
+    assert len(main.rclone_users) == 1
+    assert main.rclone_users[0].remote_name is None
+    assert main.rclone_users[0].provider is None
+
+
+def test_empty_accounts_accepted():
+    """RegistryMain permits an empty accounts list (bisync-only org)."""
+    main = RegistryMain.model_validate({
+        "meta": {"version": "0.4"},
+        "org": "top",
+        "rclone_users": [{"user": "rclone_top"}],
+        "platform": {"rclone_user": "rclone_top", "local_base": "/mnt/raid/top",
+                     "rclone_config": "/var/lib/rclone/rclone.conf"},
+        "accounts": [],
+    })
+    assert main.accounts == []
 
 
 def test_duplicate_remote_name_rejected():

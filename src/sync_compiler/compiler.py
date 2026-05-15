@@ -26,7 +26,7 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 SCHEMA_VERSION = "0.4"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags

@@ -199,3 +199,23 @@ class TestCompilePlan:
         assert plan.source_hash == "abc"
         assert plan.agent_registry_path == "/path/agent_registry.yml"
         assert plan.agent_registry_hash == "def"
+
+    def test_accountless_top_org_bisync_only(self, valid_dir):
+        """`top` has no accounts — plan has zero remotes/dirs, only agent bisync."""
+        main, h = load_main(valid_dir / "top.yml")
+        agents_tuple = load_agent_registry(valid_dir / "agent_registry.yml")
+        assert agents_tuple is not None
+        agents, ah = agents_tuple
+        plan = compile_plan(registry=main, source_file="x", source_hash="y",
+                            agent_registry=agents)
+        # No org-data: zero remotes, zero local dirs.
+        assert plan.rclone_remotes == []
+        assert plan.local_directories == []
+        # Only the top-org agent's bisync instance.
+        assert len(plan.sync_instances) == 1
+        inst = plan.sync_instances[0]
+        assert inst.name == "top-agent_oversight-scratch"
+        assert inst.mode == "bisync"
+        assert inst.env_vars is not None
+        assert inst.env_vars["RCLONE_USER"] == "agent_oversight"
+        assert inst.env_vars["LOCAL_PATH"] == "/mnt/raid/top/agents/agent_oversight/scratch/"
