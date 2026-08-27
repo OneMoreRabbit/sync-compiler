@@ -12,3 +12,7 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+# --- Atlas ---
+.atlas/
+.atlas-method/
+ATLAS-CONTEXT.md
