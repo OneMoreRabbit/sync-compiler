@@ -18,6 +18,7 @@ platform:
   rclone_user: rclone_top
   local_base: /mnt/raid/top
   rclone_config: /var/lib/rclone_top/.config/rclone/rclone.conf
+  agent_mount_base: /mnt/agent-hosts/otter/top
 
 # No accounts — bisync-only org.
 accounts: []

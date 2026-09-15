@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from sync_compiler.compiler import (
     bisync_instance_name,
     compile_plan,
@@ -9,6 +11,7 @@ from sync_compiler.compiler import (
     instance_name,
     resolved_sync_defaults,
 )
+from sync_compiler.errors import RegistryLoadError
 from sync_compiler.loader import load_agent_registry, load_main
 from sync_compiler.models import Drive, SyncDefaults
 
@@ -126,7 +129,7 @@ class TestCompilePlan:
         assert research_scratch.env_vars is not None
         assert research_scratch.env_vars["RCLONE_USER"] == "agent_arc_research_mz"
         assert research_scratch.env_vars["LOCAL_PATH"] == (
-            "/mnt/raid/arc/agents/agent_arc_research_mz/scratch/"
+            "/mnt/agent-hosts/otter/arc/agent_arc_research_mz/scratch/"
         )
         assert "drive_research_mz:Agents" in research_scratch.env_vars["REMOTE_PATH"]
         assert "--conflict-resolve=newer" in research_scratch.env_vars["BISYNC_FLAGS"]
@@ -200,6 +203,46 @@ class TestCompilePlan:
         assert plan.agent_registry_path == "/path/agent_registry.yml"
         assert plan.agent_registry_hash == "def"
 
+    def test_disabled_surface_needs_no_mount_base(self, valid_dir):
+        """A DISABLED surface must compile on an org with no platform.agent_mount_base.
+
+        Regression guard. Path resolution now raises when the root is absent, and
+        it originally ran before the `enabled` check -- so switching a surface off
+        on an org that had never declared a root turned a no-op into a hard failure.
+        §11 demands a value where it governs; a disabled surface governs nothing.
+        """
+        main, h = load_main(valid_dir / "top.yml")
+        main.platform.agent_mount_base = None          # org never declared a root
+        agents_tuple = load_agent_registry(valid_dir / "agent_registry.yml")
+        assert agents_tuple is not None
+        agents, ah = agents_tuple
+        for agent in agents.agents:
+            if agent.cloud_sync is not None:
+                for key in ("scratch", "memory"):
+                    surf = getattr(agent.cloud_sync, key)
+                    if surf is not None:
+                        surf.enabled = False
+
+        plan = compile_plan(registry=main, source_file="x", source_hash="y",
+                            agent_registry=agents)                     # must not raise
+
+        assert plan.sync_instances, "expected skeleton entries for the disabled surfaces"
+        for inst in plan.sync_instances:
+            assert inst.enabled is False
+            assert inst.env_vars is None
+
+    def test_enabled_surface_without_mount_base_fails_loudly(self, valid_dir):
+        """The converse: ENABLED and no root declared must fail, not guess."""
+        main, h = load_main(valid_dir / "top.yml")
+        main.platform.agent_mount_base = None
+        agents_tuple = load_agent_registry(valid_dir / "agent_registry.yml")
+        assert agents_tuple is not None
+        agents, ah = agents_tuple
+        with pytest.raises(RegistryLoadError) as exc:
+            compile_plan(registry=main, source_file="x", source_hash="y",
+                         agent_registry=agents)
+        assert "agent_mount_base" in str(exc.value)
+
     def test_accountless_top_org_bisync_only(self, valid_dir):
         """`top` has no accounts — plan has zero remotes/dirs, only agent bisync."""
         main, h = load_main(valid_dir / "top.yml")
@@ -218,4 +261,6 @@ class TestCompilePlan:
         assert inst.mode == "bisync"
         assert inst.env_vars is not None
         assert inst.env_vars["RCLONE_USER"] == "agent_oversight"
-        assert inst.env_vars["LOCAL_PATH"] == "/mnt/raid/top/agents/agent_oversight/scratch/"
+        # ADR-0010 §7: scratch is authoritative on the agent host and reaches
+        # beaver through its mount, so it no longer sits under /mnt/raid.
+        assert inst.env_vars["LOCAL_PATH"] == "/mnt/agent-hosts/otter/top/agent_oversight/scratch/"

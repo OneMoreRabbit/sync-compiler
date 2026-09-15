@@ -198,12 +198,19 @@ def build_bisync_instances(
                 continue
 
             name = bisync_instance_name(target_org, agent.name, surface_key)
-            local_path = resolve_surface_path(agent, surface_key)
 
             if not surf.enabled:
                 # Disabled: skeleton entry so Ansible knows to stop the timer.
+                # Resolved BEFORE any path work: a disabled surface needs no root,
+                # so a missing platform.agent_mount_base must not fail here. The
+                # root governs nothing for this surface, and §11 requires a value
+                # to be demanded only where it governs.
                 instances.append(SyncInstance(name=name, enabled=False, mode="bisync"))
                 continue
+
+            local_path = resolve_surface_path(
+                agent, surface_key, registry.platform.agent_mount_base
+            )
 
             assert local_path is not None  # share_class set + override-or-convention
 

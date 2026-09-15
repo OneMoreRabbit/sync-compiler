@@ -81,6 +81,14 @@ class Platform(BaseModel):
     rclone_user: str
     local_base: str
     rclone_config: str
+    # ADR-0010 §7: beaver's mount of the agent host's export, for this org --
+    # `/mnt/agent-hosts/<host>/<org>`. memory/sessions/scratch resolve under it;
+    # `configs/` does NOT move and stays under the historic /mnt/raid shape.
+    # Optional because an org with no agent surfaces needs no such root (§11 1.6:
+    # a value governing nothing is not declared). NEVER defaulted: it names the
+    # host whose disk holds the data, and a plausible value would be a path to
+    # the wrong machine (§11 1.11 -- a target never takes a plausible default).
+    agent_mount_base: str | None = None
     default_owner: str | None = None
     default_group: str | None = None
     default_mode: str | None = None
@@ -103,6 +111,18 @@ class Platform(BaseModel):
         if ".." in v.split("/"):
             raise ValueError(f"must not contain '..': got '{v}'")
         return v
+
+    @field_validator("agent_mount_base")
+    @classmethod
+    def agent_mount_base_valid(cls, v: str | None) -> str | None:
+        """Same path rules as local_base, but absence is legal (see the field note)."""
+        if v is None:
+            return v
+        if not v.startswith("/"):
+            raise ValueError(f"must be an absolute path (start with '/'): got '{v}'")
+        if ".." in v.split("/"):
+            raise ValueError(f"must not contain '..': got '{v}'")
+        return v.rstrip("/")
 
     @field_validator("default_mode")
     @classmethod

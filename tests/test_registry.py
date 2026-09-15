@@ -51,19 +51,72 @@ class TestUniquify:
 # ── resolve_surface_path ──────────────────────────────────────────────────────
 
 class TestResolveSurfacePath:
-    def test_convention_org(self):
+    # ADR-0010 §7: the three hot surfaces resolve under the declared beaver mount;
+    # `configs/` deliberately does not move.
+
+    def test_hot_surface_uses_declared_mount_base(self):
         a = AgentRecord.model_validate({
             "name": "agent_x",
             "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
         })
-        assert resolve_surface_path(a, "scratch") == "/mnt/raid/arc/agents/agent_x/scratch/"
+        assert resolve_surface_path(a, "scratch", "/mnt/agent-hosts/otter/arc") == \
+            "/mnt/agent-hosts/otter/arc/agent_x/scratch/"
 
-    def test_convention_top(self):
+    def test_hot_surface_top_org(self):
         a = AgentRecord.model_validate({
             "name": "agent_oversight",
             "share_class": {"org": "top", "grade": 0, "vertical": "any", "scope": "global"},
         })
-        assert resolve_surface_path(a, "memory") == "/mnt/raid/top/agents/agent_oversight/memory/"
+        assert resolve_surface_path(a, "memory", "/mnt/agent-hosts/otter/top") == \
+            "/mnt/agent-hosts/otter/top/agent_oversight/memory/"
+
+    def test_all_three_hot_surfaces_move(self):
+        a = AgentRecord.model_validate({
+            "name": "agent_x",
+            "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        })
+        for surface in ("memory", "sessions", "scratch"):
+            assert resolve_surface_path(a, surface, "/mnt/agent-hosts/otter/arc") == \
+                f"/mnt/agent-hosts/otter/arc/agent_x/{surface}/"
+
+    def test_configs_does_not_move(self):
+        """`configs/` keeps the historic beaver shape -- secrets and TLS resolve
+        through it, and ADR-0010 §7 records the asymmetry as deliberate."""
+        a = AgentRecord.model_validate({
+            "name": "agent_x",
+            "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        })
+        assert resolve_surface_path(a, "configs", "/mnt/agent-hosts/otter/arc") == \
+            "/mnt/raid/arc/agents/agent_x/configs/"
+
+    def test_configs_needs_no_mount_base(self):
+        """configs does not move, so it must resolve with no root declared at all."""
+        a = AgentRecord.model_validate({
+            "name": "agent_x",
+            "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        })
+        assert resolve_surface_path(a, "configs") == "/mnt/raid/arc/agents/agent_x/configs/"
+
+    def test_missing_mount_base_raises_rather_than_guessing(self):
+        """No default: a guessed root is a plausible path to the wrong machine."""
+        a = AgentRecord.model_validate({
+            "name": "agent_x",
+            "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        })
+        with pytest.raises(RegistryLoadError) as exc:
+            resolve_surface_path(a, "scratch")
+        msg = str(exc.value)
+        assert "agent_mount_base" in msg
+        assert "agent_x" in msg and "arc" in msg      # names what failed
+        assert "sync/arc.yml" in msg                  # and where to fix it
+
+    def test_trailing_slash_on_base_is_tolerated(self):
+        a = AgentRecord.model_validate({
+            "name": "agent_x",
+            "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
+        })
+        assert resolve_surface_path(a, "scratch", "/mnt/agent-hosts/otter/arc/") == \
+            "/mnt/agent-hosts/otter/arc/agent_x/scratch/"
 
     def test_override(self):
         a = AgentRecord.model_validate({
