@@ -13,9 +13,7 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
-## Built, not yet released
-
-### 0.4.2 — 2026-11-11
+## v0.4.2 — 2026-11-11
 
 **TL;DR:** emits compiled-sync-plan **0.5** — org Drive folder scopes, OAuth by token
 reference, and a `--max-delete` bound on every two-way sync.
@@ -40,7 +38,17 @@ reference, and a `--max-delete` bound on every two-way sync.
 - A registry still declaring `meta.version: "0.4"` keeps compiling unchanged, and gains
   the delete bound without being edited.
 
-**Action:** estate-fileserver must handle plan `schema_version: 0.5` before this ships —
-rclone remote config now reads `token_file` where an oauth account is used, and folder
-scope instances take ownership from `platform` defaults rather than an agent user. See
-`compiled-sync-plan-v0_5.md` in the vault.
+**The delete bound does nothing until `arc` declares `agent_mount_base`.** Measured
+against the live registry on release day: the whole registry holds exactly one enabled
+bisync surface, `agent_arc_exec` `scratch`, and it is in `arc` — which does not compile,
+because `sync/arc.yml` has no `platform.agent_mount_base` and ADR-0010 §7 requires one.
+That is a pre-existing mismatch (dev HEAD fails identically, before this release), and
+arch holds the decision. `top` compiles, but both its surfaces are `enabled: false` and
+emit as skeletons with no flags. So this release makes the estate *ready* to be safe; it
+does not by itself make any running job safe.
+
+**Action:** estate-fileserver must handle plan `schema_version: 0.5` — rclone remote
+config now reads `token_file` where an oauth account is used, folder scope instances take
+ownership from `platform` defaults rather than an agent user, and every remote now carries
+a `token_file` key, empty on service-account remotes (arch ruling: keep, consistent with
+the emitter's existing null keys). See `compiled-sync-plan-v0_5.md` in the vault.
