@@ -20,7 +20,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 LINUX_USERNAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 ORG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -135,20 +142,46 @@ class Platform(BaseModel):
 
 
 class Auth(BaseModel):
-    """Provider auth — v0.4: service_account only (oauth deferred)."""
+    """Provider auth. v0.5 makes `oauth` real, by token FILE REFERENCE.
+
+    A personal org's Google account cannot use a service account, so v0.5 names
+    a token file path on the fileserver. sync-compile never reads its contents:
+    no token value reaches a compiled plan, a log, or the vault.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     type: Literal["service_account", "oauth"]
     service_account_file: str | None = None
+    token_file: str | None = None
     impersonate: str | None = None
 
-    @field_validator("service_account_file")
+    @field_validator("service_account_file", "token_file")
     @classmethod
-    def path_absolute(cls, v: str | None) -> str | None:
+    def path_absolute(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is not None and not v.startswith("/"):
-            raise ValueError(f"service_account_file must be an absolute path: got '{v}'")
+            raise ValueError(f"{info.field_name} must be an absolute path: got '{v}'")
         return v
+
+    @model_validator(mode="after")
+    def credential_matches_type(self) -> Auth:
+        """Exactly the credential the type calls for — never both, never neither.
+
+        A missing credential is not defaulted: it names the file the compiler
+        tells Ansible to authenticate with, and a plausible default would point
+        at the wrong account's token (constitution §11 1.11).
+        """
+        if self.type == "service_account":
+            if self.service_account_file is None:
+                raise ValueError("auth.type 'service_account' requires service_account_file")
+            if self.token_file is not None:
+                raise ValueError("auth.type 'service_account' must not set token_file")
+        else:  # oauth
+            if self.token_file is None:
+                raise ValueError("auth.type 'oauth' requires token_file")
+            if self.service_account_file is not None:
+                raise ValueError("auth.type 'oauth' must not set service_account_file")
+        return self
 
 
 class SyncDefaults(BaseModel):
@@ -217,6 +250,73 @@ class RcloneUser(BaseModel):
     impersonate: str | None = None
 
 
+ConflictPolicy = Literal["newer", "suffix"]
+
+# Operator ruling 2026-11-11: 50 deletes per run, for every two-way sync,
+# matching estate-manage's vault drive-sync. A scope may override it.
+# NEVER left to rclone's own default: 1.73.5 defaults --max-delete to -1
+# (unlimited) and the percent-based bisync default does not exist in that
+# version, so the bound must be emitted explicitly to mean the same thing
+# on every host.
+DEFAULT_MAX_DELETE = 50
+
+
+class DriveFolder(BaseModel):
+    """An org Drive folder synced two-way (compiled-sync-plan 0.5).
+
+    Today's bisync is agent-shaped: a `scratch` or `memory` surface on an agent
+    record, resolved under ADR-0010 §7's mount root. A Drive folder belongs to
+    the ORG, not to an agent, so it carries its own local path and names the
+    account whose credentials reach it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    remote: str                      # an Account.remote_name in this org
+    folder: str                      # the folder as named in the Drive
+    local_path: str                  # absolute path on the fileserver
+    enabled: bool = True
+    team_drive: str | None = None    # shared-drive id; omitted for a personal Drive
+    conflict_policy: ConflictPolicy = "newer"
+    schedule: str = "*:0/15"
+    max_delete: int = DEFAULT_MAX_DELETE
+
+    @field_validator("name")
+    @classmethod
+    def name_valid(cls, v: str) -> str:
+        if not REMOTE_NAME_RE.match(v):
+            raise ValueError(
+                f"'{v}' is not a valid folder scope name "
+                "(lowercase alphanumeric + underscores, must start with a letter)"
+            )
+        return v
+
+    @field_validator("local_path")
+    @classmethod
+    def local_path_absolute(cls, v: str) -> str:
+        if not v.startswith("/"):
+            raise ValueError(f"local_path must be an absolute path: got '{v}'")
+        return v
+
+    @field_validator("max_delete")
+    @classmethod
+    def max_delete_bounded(cls, v: int) -> int:
+        """A bound that does not bound is not a bound.
+
+        rclone reads -1 as unlimited and 0 as 'delete nothing'. Unlimited is the
+        defect this field exists to close, so it is refused outright rather than
+        quietly accepted.
+        """
+        if v < 1:
+            raise ValueError(
+                f"max_delete must be at least 1: got {v}. "
+                "rclone treats -1 as unlimited, which is the condition this field "
+                "exists to prevent; to pause a scope, set enabled: false."
+            )
+        return v
+
+
 class RegistryMain(BaseModel):
     """<org>.yml v0.4. Top-level agents live under org `top`; no special case."""
 
@@ -225,6 +325,7 @@ class RegistryMain(BaseModel):
     rclone_users: list[RcloneUser] = Field(default_factory=list)
     platform: Platform
     accounts: list[Account] = Field(default_factory=list)
+    drive_folders: list[DriveFolder] = Field(default_factory=list)
 
     @field_validator("org")
     @classmethod
@@ -292,7 +393,6 @@ class SnapshotRegistry(BaseModel):
 
 # ── agent_registry.yml — sync-compile reads share_class + cloud_sync ─────────
 
-ConflictPolicy = Literal["newer", "suffix"]
 BisyncSurfaceKey = Literal["scratch", "memory"]
 
 
@@ -323,6 +423,7 @@ class BisyncSurface(BaseModel):
     remote: str | None = None
     conflict_policy: ConflictPolicy = "newer"
     schedule: str = "*:0/1"
+    max_delete: int = DEFAULT_MAX_DELETE
 
     @field_validator("remote")
     @classmethod
@@ -415,6 +516,9 @@ class RcloneRemote:
     service_account_file: str | None
     impersonate: str | None
     team_drive: str
+    # 0.5: set where the account authenticates by OAuth token reference.
+    # Exactly one of service_account_file / token_file is ever populated.
+    token_file: str | None = None
 
 
 @dataclass

@@ -1,0 +1,44 @@
+# Valid v0.5 fixture — `job` org: the operator's personal Google Drive.
+# OAuth by token reference (a personal account cannot use a service account),
+# and one folder-shaped two-way scope. Mirrors seat-data-sharing-design §5/§6.
+meta:
+  version: "0.4"
+  stage: beta
+  last_modified: "2026-11-11"
+  last_modified_by: "test"
+  description: "job org — personal Drive, test fixture"
+
+org: job
+
+rclone_users:
+  - user: rclone_job
+    remote_name: ojb_drive
+    provider: drive
+
+platform:
+  rclone_user: rclone_job
+  local_base: /mnt/raid/job
+  rclone_config: /var/lib/rclone_job/.config/rclone/rclone.conf
+
+accounts:
+  - remote_name: ojb_drive
+    provider: drive
+    description: "Operator's personal Google Drive (ojblakeman)"
+    auth:
+      type: oauth
+      token_file: /root/.kf/drive-token-ojb.json
+
+    sync_defaults:
+      local_subdir: drive
+      schedule: "*:0/15"
+
+    drives: []
+
+drive_folders:
+  - name: mico_data
+    remote: ojb_drive
+    folder: "Mico Data"
+    local_path: /mnt/raid/job/drive/mico_data
+    enabled: true
+    conflict_policy: newer
+    schedule: "*:0/15"
