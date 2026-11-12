@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .cloud import CloudDrive
-from .errors import RegistryError, RegistryWarning
+from .errors import RegistryError, RegistryLoadError, RegistryWarning
 from .models import (
     AgentRecord,
     AgentRegistry,
@@ -56,17 +56,31 @@ def uniquify(candidate: str, taken: set[str]) -> str:
 
 # ── Agent surface path derivation (shared with rbac-compile by replication) ──
 
-def resolve_surface_path(agent: AgentRecord, surface: str) -> str | None:
-    """Resolve the on-disk path for one surface of one agent.
+def resolve_surface_path(
+    agent: AgentRecord, surface: str, agent_mount_base: str | None = None
+) -> str | None:
+    """Resolve the on-disk path for one surface of one agent, as beaver sees it.
 
     surface ∈ {'configs', 'memory', 'sessions', 'scratch'}
     Returns the canonicalised path with trailing slash. None if `share_class`
     is unset (agent has no home, can't compute conventional path).
+
+    ADR-0010 §7 splits the roots. `configs/` does NOT move: it keeps the historic
+    beaver shape, because secrets delivery and TLS material resolve through it.
+    `memory`, `sessions` and `scratch` are authoritative on the agent host's local
+    disk and reach beaver through its mount of that host's export, so they resolve
+    under the caller's declared `agent_mount_base` (`/mnt/agent-hosts/<host>/<org>`).
+
+    `agent_mount_base` is REQUIRED for those three and has no default. Absent, this
+    raises rather than guessing: a default here would be a plausible path to the
+    wrong machine, which §11 forbids for a value naming what the tool operates on,
+    and ADR-0010 §6 rates a wrong-but-plausible path worse than a failure because
+    it succeeds.
     """
     if surface not in SURFACES:
         raise ValueError(f"unknown surface '{surface}'; valid: {SURFACES}")
 
-    # Override wins
+    # Override wins — an explicit path names its own root.
     if agent.shares is not None:
         override = getattr(agent.shares, surface, None)
         if override:
@@ -76,8 +90,22 @@ def resolve_surface_path(agent: AgentRecord, surface: str) -> str | None:
         return None
 
     org = agent.share_class.org
-    base = PurePosixPath("/mnt/raid") / org / "agents" / agent.name
-    return str(base / surface) + "/"
+
+    if surface == "configs":
+        base = PurePosixPath("/mnt/raid") / org / "agents" / agent.name
+        return str(base / surface) + "/"
+
+    if not agent_mount_base:
+        raise RegistryLoadError(
+            f"agent '{agent.name}' (org '{org}') needs surface '{surface}', which lives on "
+            f"the agent host and reaches beaver through its mount — but "
+            f"platform.agent_mount_base is not set for org '{org}'. "
+            f"Declare it in sync/{org}.yml as /mnt/agent-hosts/<host>/{org} "
+            f"(ADR-0010 §7). It is deliberately not defaulted: a guessed root is a "
+            f"path to the wrong machine."
+        )
+
+    return str(PurePosixPath(agent_mount_base) / agent.name / surface) + "/"
 
 
 def _canonicalise(path: str) -> str:

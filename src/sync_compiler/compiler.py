@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
+from .errors import RegistryLoadError
 from .models import (
     Account,
     AgentRecord,
@@ -17,6 +18,7 @@ from .models import (
     BisyncSurface,
     CompiledPlan,
     Drive,
+    DriveFolder,
     LocalDirectory,
     PlatformOut,
     RcloneRemote,
@@ -26,8 +28,8 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.1"
-SCHEMA_VERSION = "0.4"
+__version__ = "0.4.2"
+SCHEMA_VERSION = "0.5"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags
 # are added based on user's conflict_policy.
@@ -140,8 +142,18 @@ def conflict_resolve_flags(policy: str) -> str:
     return "--conflict-resolve=newer"  # pragma: no cover — pydantic blocks this
 
 
-def bisync_flags(surface: BisyncSurface) -> str:
-    return f"{BISYNC_BASELINE_FLAGS} {conflict_resolve_flags(surface.conflict_policy)}"
+def bisync_flags(conflict_policy: str, max_delete: int) -> str:
+    """Flags for one bisync instance.
+
+    `--max-delete` is emitted on EVERY bisync, always as an explicit integer.
+    rclone 1.73.5 defaults it to -1 (unlimited) and has no percent-based bisync
+    default, so leaving it off means the compiled plan means different things on
+    different hosts. The value is bounded >= 1 at the model.
+    """
+    return (
+        f"{BISYNC_BASELINE_FLAGS} --max-delete {max_delete} "
+        f"{conflict_resolve_flags(conflict_policy)}"
+    )
 
 
 def bisync_excludes() -> str:
@@ -167,9 +179,88 @@ def bisync_env_vars(
         "RCLONE_CONFIG": registry.platform.rclone_config,
         "LOCAL_PATH": local_path,
         "REMOTE_PATH": surface.remote or "",
-        "BISYNC_FLAGS": bisync_flags(surface),
+        "BISYNC_FLAGS": bisync_flags(surface.conflict_policy, surface.max_delete),
         "EXCLUDE_PATTERNS": bisync_excludes(),
     }
+
+
+def folder_instance_name(org: str, folder: DriveFolder) -> str:
+    return f"{org}-{folder.name}"
+
+
+def folder_env_vars(
+    registry: RegistryMain,
+    folder: DriveFolder,
+) -> dict[str, str]:
+    """Env file contents for a folder-scope bisync instance.
+
+    RCLONE_USER is the org's rclone user, NOT an agent: a folder scope belongs
+    to the org, so writes arriving from the cloud take the org's ownership from
+    platform defaults rather than an agent's identity.
+    """
+    return {
+        "RCLONE_USER": registry.platform.rclone_user,
+        "RCLONE_CONFIG": registry.platform.rclone_config,
+        "LOCAL_PATH": folder.local_path,
+        "REMOTE_PATH": f"{folder.remote}:{folder.folder}",
+        "BISYNC_FLAGS": bisync_flags(folder.conflict_policy, folder.max_delete),
+        "EXCLUDE_PATTERNS": bisync_excludes(),
+    }
+
+
+def build_folder_instances(
+    registry: RegistryMain,
+) -> tuple[list[SyncInstance], list[RcloneRemote], list[LocalDirectory]]:
+    """Emit one bisync SyncInstance per org Drive folder scope, with the rclone
+    remote and local directory each needs.
+
+    The scope's `remote` names an Account in this org; its auth is reused rather
+    than restated, so a credential has exactly one home.
+    """
+    instances: list[SyncInstance] = []
+    remotes: list[RcloneRemote] = []
+    local_dirs: list[LocalDirectory] = []
+
+    accounts = {a.remote_name: a for a in registry.accounts}
+
+    for folder in registry.drive_folders:
+        name = folder_instance_name(registry.org, folder)
+
+        if not folder.enabled:
+            # Disabled: skeleton entry so Ansible stops the timer. Resolved
+            # before any account lookup — a disabled scope governs nothing.
+            instances.append(SyncInstance(name=name, enabled=False, mode="bisync"))
+            continue
+
+        account = accounts.get(folder.remote)
+        if account is None:
+            raise RegistryLoadError(
+                f"drive_folders['{folder.name}'].remote names '{folder.remote}', "
+                f"which is not an account in org '{registry.org}'. "
+                f"Known accounts: {sorted(accounts) or '(none)'}."
+            )
+
+        remotes.append(RcloneRemote(
+            name=account.remote_name,
+            type=account.provider,
+            scope="drive",
+            service_account_file=account.auth.service_account_file,
+            impersonate=account.auth.impersonate,
+            team_drive=folder.team_drive or "",
+            token_file=account.auth.token_file,
+        ))
+        local_dirs.append(LocalDirectory(path=folder.local_path))
+        instances.append(SyncInstance(
+            name=name,
+            enabled=True,
+            mode="bisync",
+            env_file_path=bisync_env_file_path(name),
+            env_vars=folder_env_vars(registry, folder),
+            timer_override_path=bisync_timer_override_path(name),
+            schedule=folder.schedule,
+        ))
+
+    return instances, remotes, local_dirs
 
 
 def build_bisync_instances(
@@ -198,12 +289,19 @@ def build_bisync_instances(
                 continue
 
             name = bisync_instance_name(target_org, agent.name, surface_key)
-            local_path = resolve_surface_path(agent, surface_key)
 
             if not surf.enabled:
                 # Disabled: skeleton entry so Ansible knows to stop the timer.
+                # Resolved BEFORE any path work: a disabled surface needs no root,
+                # so a missing platform.agent_mount_base must not fail here. The
+                # root governs nothing for this surface, and §11 requires a value
+                # to be demanded only where it governs.
                 instances.append(SyncInstance(name=name, enabled=False, mode="bisync"))
                 continue
+
+            local_path = resolve_surface_path(
+                agent, surface_key, registry.platform.agent_mount_base
+            )
 
             assert local_path is not None  # share_class set + override-or-convention
 
@@ -282,6 +380,12 @@ def compile_plan(
 
     # ── Agent bisync instances ───────────────────────────────────────────────
     instances.extend(build_bisync_instances(registry, agent_registry))
+
+    # ── Org Drive folder scopes (0.5) ────────────────────────────────────────
+    folder_instances, folder_remotes, folder_dirs = build_folder_instances(registry)
+    instances.extend(folder_instances)
+    remotes.extend(folder_remotes)
+    local_dirs.extend(folder_dirs)
 
     # Deterministic ordering
     remotes.sort(key=lambda r: r.name)
