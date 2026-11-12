@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from sync_compiler.cloud import CloudDrive
 from sync_compiler.errors import RegistryLoadError
@@ -118,13 +119,30 @@ class TestResolveSurfacePath:
         assert resolve_surface_path(a, "scratch", "/mnt/agent-hosts/otter/arc/") == \
             "/mnt/agent-hosts/otter/arc/agent_x/scratch/"
 
-    def test_override(self):
+    def test_configs_override_still_wins(self):
+        """configs/ did not move, so it stays overridable (ADR-0010 §1, §8)."""
         a = AgentRecord.model_validate({
             "name": "agent_x",
             "share_class": {"org": "arc", "grade": 3, "vertical": "tech", "scope": "mz"},
-            "shares": {"scratch": "/custom/path/scratch"},
+            "shares": {"configs": "/custom/path/configs"},
         })
-        assert resolve_surface_path(a, "scratch") == "/custom/path/scratch/"
+        assert resolve_surface_path(a, "configs") == "/custom/path/configs/"
+
+    @pytest.mark.parametrize("surface", ["memory", "sessions", "scratch"])
+    def test_classified_surface_override_is_refused(self, surface):
+        """ADR-0010 §8 — a hard validation error, not warn-and-skip.
+
+        Until v0.4.4 sync-compile honoured this override while rbac-compile
+        refused it, so the two compilers disagreed about where a hot surface
+        lived. Failing at load means a registry carrying one cannot compile.
+        """
+        with pytest.raises(ValidationError, match="ADR-0010"):
+            AgentRecord.model_validate({
+                "name": "agent_x",
+                "share_class": {"org": "arc", "grade": 3, "vertical": "tech",
+                                "scope": "mz"},
+                "shares": {surface: "/custom/path/x"},
+            })
 
     def test_no_share_class_returns_none(self):
         a = AgentRecord.model_validate({"name": "agent_x"})

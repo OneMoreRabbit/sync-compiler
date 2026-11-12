@@ -1,6 +1,8 @@
 # sync-compiler
 
-Compiles a per-org sync registry into an Ansible-applicable plan for configuring rclone-based cloud→local syncs on a multi-tenant Linux fileserver.
+Compiles a per-org sync registry into an Ansible-applicable plan for configuring rclone-based syncs on a multi-tenant Linux fileserver.
+
+Three kinds of sync: a one-way copy of a shared drive; a two-way sync of an agent's folder; a two-way sync of an org Drive folder.
 
 Reads `sync/<org>.yml` (sole source of truth) and emits `compiled_sync_plan_<org>.yml`. Ansible consumes the plan to write rclone config blocks, create local directories, and manage systemd timer instances.
 
@@ -21,7 +23,7 @@ Companion tool to `rbac-compiler` (same architecture, independent concerns).
 ### From GitHub (recommended)
 
 ```bash
-pipx install git+https://github.com/jobcpf/sync-compiler.git
+pipx install git+https://github.com/OneMoreRabbit/sync-compiler.git
 ```
 
 Installs `sync-compile` into `~/.local/bin/`. Upgrade later with `pipx upgrade sync-compiler`.
@@ -29,7 +31,7 @@ Installs `sync-compile` into `~/.local/bin/`. Upgrade later with `pipx upgrade s
 ### For development
 
 ```bash
-git clone https://github.com/jobcpf/sync-compiler.git
+git clone https://github.com/OneMoreRabbit/sync-compiler.git
 cd sync-compiler
 python3 -m venv .venv
 source .venv/bin/activate
@@ -111,7 +113,10 @@ The tool **never** mutates `<org>.yml`. Promotion of drives from snapshot to sou
     └── compiled_sync_plan_arc.yml
 ```
 
-See `docs/registry_schema.md` for the schema reference; the authoritative spec is `Sync Compiler Architecture 0.2.md` (schema v0.3 brief in the same repo for the v0.2→v0.3 migration details).
+The authoritative documents live in the Atlas vault, not here:
+`components/sync-compile/docs/sync-compile-architecture-v0_5.md` (how it works, with diagrams)
+and `components/sync-compile/docs/provides/compiled-sync-plan-v0_6.md` (the plan it emits,
+field by field). `docs/registry_schema.md` in this repo is a pointer to them.
 
 ## Relationship to Ansible
 
@@ -122,14 +127,21 @@ See `docs/registry_schema.md` for the schema reference; the authoritative spec i
 3. Writes per-instance env files and timer drop-ins
 4. Enables/disables systemd timer instances
 
-## Schema version
+## Versions
 
-Both `<org>.yml` and the discovery snapshot carry `meta.version: "0.3"`. v0.2 layouts trigger a fail-fast with operator-friendly migration instructions.
+Two different numbers, and they move independently:
+
+- **Input**: `<org>.yml` and the discovery snapshot carry `meta.version: "0.4"`. v0.2 and
+  v0.3 layouts trigger a fail-fast with operator-friendly migration instructions.
+- **Output**: the compiled plan carries `schema_version: "0.6"` — the
+  `compiled-sync-plan` contract version, which is not this package's version.
+
+Installed from tags only. See `release-notes.md` for what each release changed.
 
 ## Development
 
 ```bash
-pytest                          # 91 tests, ~90% coverage
+pytest                          # 135 tests; coverage floor 85%
 pytest --cov
 ruff check src/ tests/
 mypy src/

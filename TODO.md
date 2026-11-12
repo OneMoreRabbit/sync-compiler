@@ -51,7 +51,9 @@ v0.2 / v0.3 hard-code `provider: drive`. `cloud.py` is structured around a `Clou
 - Provider-specific rclone backend or API client
 
 ### OAuth flows
-Required for Dropbox and non-Workspace Google accounts. Auth module needs a refresh-token code path. Currently service-account-only.
+Required for Dropbox. **Done for Google (v0.4.2):** `auth.type: oauth` names a token
+file path for a personal org, used by the `job` org. Dropbox still needs its own
+refresh-token code path.
 
 ---
 
@@ -61,7 +63,11 @@ Required for Dropbox and non-Workspace Google accounts. Auth module needs a refr
 Bulk org syncs (current scope) handle `arc/dropbox` → `/mnt/raid/arc/dropbox`. Agent-specific cloud→local→cloud flows (`Agents/agent_X/inbox`, `Agents/agent_X/outbox`) follow a similar pattern at finer granularity. Likely a separate tool or a subcommand — design before implementing.
 
 ### Bidirectional sync
-Never wanted for bulk data. May eventually be wanted for agent outboxes. Different semantics from one-way sync; separate code path. Don't conflate.
+**Done (v0.4.1 agent surfaces, v0.4.2 org Drive folders).** `mode: bisync` covers an
+agent's `scratch`/`memory` and an org Drive folder (`drive_folders:`). This entry used
+to read "never wanted for bulk data" — that judgement was overtaken by ADR-0010 and the
+seat-data-sharing design. Every two-way run carries a delete bound: `MAX_DELETE` as a
+file count for the estate wrapper, plus rclone's 90% backstop.
 
 ---
 
