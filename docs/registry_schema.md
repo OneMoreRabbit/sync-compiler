@@ -1,21 +1,17 @@
-# Registry schema
+# Registry schema — see the vault
 
-The authoritative schema is documented in the architecture brief at
-`Sync Compiler Architecture 0.2.md` in the parent repository.
+This file used to restate the registry schema. It described schema 0.2 and had
+drifted badly from the code, which is the hazard of a second home for one fact.
 
-## Quick reference
+The authoritative documents are in the Atlas vault:
 
-Each org has two files under `~/registry/sync/`:
+| For | Read |
+|---|---|
+| how sync-compile works, with diagrams | `components/sync-compile/docs/sync-compile-architecture-v0_5.md` |
+| the plan it emits, field by field | `components/sync-compile/docs/provides/compiled-sync-plan-v0_6.md` |
+| the `cloud_sync` and `shares` fields on an agent record | `components/sync-compile/docs/provides/agent-shares-schema-v0_5.md` |
+| who owns which registry file | `components/rbac-compile/docs/provides/registry-handoff-v0_6.md` |
 
-- **`<org>.yml`** — human-owned intent. Contains `meta`, `org`, `rclone_users[]`
-  (for Ansible, ignored by sync-compile), `platform`, and `accounts[]` with
-  auth config and sync defaults. **Never rewritten by sync-compile.**
-- **`<org>.cloud.yml`** — tool-owned drive inventory. Contains `meta`, `org`,
-  and `accounts[]` with just `remote_name` + `drives[]`. **Rewritten atomically
-  by `sync-compile discover`**; humans edit it between discoveries to flip
-  `enabled: true` and refine `local_name` / `overrides`.
-
-Join key: `accounts[].remote_name` in `<org>.cloud.yml` must reference an
-account in `<org>.yml`.
-
-Schema version: both files carry `meta.version: "0.2"`.
+The models in `src/sync_compiler/models.py` are the executable statement of the
+input schema; when this repo and the vault disagree, the vault contract is the
+agreement and the models are what actually runs.

@@ -13,6 +13,30 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.4.4 — 2026-11-12
+
+**TL;DR:** refuses a per-agent `shares:` override of `memory`, `sessions` or `scratch`
+(ADR-0010 §8), and clears three stale documents in this repo.
+
+- **The override is now a hard validation error**, not a silently honoured path.
+  rbac-compile has refused it since September; sync-compile still honoured it, so the
+  two compilers could disagree about where an agent's hot surface lived. A registry
+  carrying one now cannot compile at all, which is what the ADR asks for — failing at
+  load also stops the migration being run out of order. `shares.configs` stays
+  overridable, because `configs/` did not move.
+- No plan contract change: `compiled-sync-plan` stays **0.6**. This narrows which
+  registries are accepted; it does not change the shape of what is emitted.
+- **Docs in this repo corrected**: the README pointed at `jobcpf/sync-compiler` and
+  claimed schema 0.3 and 91 tests; `docs/registry_schema.md` restated schema 0.2 and had
+  drifted; `TODO.md` said auth was service-account-only and that two-way sync was "never
+  wanted for bulk data". All three were written before ADR-0010 and the 0.5/0.6 work.
+  `docs/registry_schema.md` is now a pointer to the vault rather than a second home for
+  the same fact, which is how it drifted.
+
+**Action:** none for consumers. If a registry anywhere still carries
+`shares.memory/sessions/scratch`, it must be removed before this version will compile it
+— the error names the surface and the ADR.
+
 ## v0.4.3 — 2026-11-12
 
 **TL;DR:** emits compiled-sync-plan **0.6** — the delete bound is now a file COUNT in

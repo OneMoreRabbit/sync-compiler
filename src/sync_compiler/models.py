@@ -454,8 +454,18 @@ class AgentCloudSync(BaseModel):
     memory: BisyncSurface | None = None
 
 
+# ADR-0010 §8: the three surfaces that moved to the agent host. An override of
+# one of these is refused; `configs` stays overridable because configs/ did not
+# move (§1).
+CLASSIFIED_SURFACES = ("memory", "sessions", "scratch")
+
+
 class AgentShares(BaseModel):
-    """Optional per-surface path overrides for an agent."""
+    """Optional per-surface path overrides for an agent.
+
+    Only `configs` may be overridden. ADR-0010 §8 rules that an override of a
+    classified surface is refused outright.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -463,6 +473,30 @@ class AgentShares(BaseModel):
     memory: str | None = None
     sessions: str | None = None
     scratch: str | None = None
+
+    @model_validator(mode="after")
+    def classified_surfaces_not_overridable(self) -> AgentShares:
+        """Refuse an override of memory, sessions or scratch (ADR-0010 §8).
+
+        A HARD validation error, deliberately, and not warn-and-skip: the ADR
+        records that a skipped override emits a plan in which a hot surface has
+        no group and no ACL — a plan true of neither state. Failing validation
+        also means a registry still carrying an override cannot compile at all,
+        so the migration cannot be run out of order by accident.
+
+        rbac-compile refuses the same override, so none survives in practice;
+        this closes the half that was still accepting it.
+        """
+        offenders = [s for s in CLASSIFIED_SURFACES if getattr(self, s) is not None]
+        if offenders:
+            named = ", ".join(offenders)
+            raise ValueError(
+                f"shares.{named}: a per-agent override of a classified surface is "
+                f"unsupported (ADR-0010 §8). {named} live on the agent host and "
+                f"resolve under platform.agent_mount_base; only shares.configs may "
+                f"be overridden, because configs/ did not move."
+            )
+        return self
 
 
 class AgentRecord(BaseModel):
