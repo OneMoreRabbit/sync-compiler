@@ -1,6 +1,6 @@
-"""compiled-sync-plan 0.5 — folder scopes, oauth token reference, --max-delete.
+"""compiled-sync-plan 0.5 and 0.6 — folder scopes, oauth token reference, delete bounds.
 
-Contract: components/sync-compile/docs/provides/compiled-sync-plan-v0_5.md
+Contract: components/sync-compile/docs/provides/compiled-sync-plan-v0_6.md
 Design:   architecture/seat-data-sharing-design-v0_2.md §5
 """
 
@@ -15,7 +15,12 @@ from pydantic import ValidationError
 from sync_compiler.compiler import compile_plan
 from sync_compiler.errors import RegistryLoadError
 from sync_compiler.loader import load_agent_registry, load_main
-from sync_compiler.models import DEFAULT_MAX_DELETE, Auth, DriveFolder
+from sync_compiler.models import (
+    BISYNC_MAX_DELETE_PERCENT,
+    DEFAULT_MAX_DELETE,
+    Auth,
+    DriveFolder,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -35,16 +40,21 @@ def _bisync(plan, name_suffix: str):
 # ── 3. --max-delete, on EVERY bisync ─────────────────────────────────────────
 
 class TestMaxDelete:
-    """The bound that closes the logged unbounded-delete defect."""
+    """Two bounds in two different units. 0.6 separates them.
 
-    def test_default_is_50_by_operator_ruling(self) -> None:
+    `max_delete` on a scope is a COUNT OF FILES, emitted as MAX_DELETE for
+    the estate-side gate. rclone's --max-delete is a PERCENTAGE when the command
+    is bisync, so it carries a high backstop instead and never the count.
+    estate-manage measured --max-delete 50 tripping at 2 of 3 files (67%).
+    """
+
+    def test_count_default_is_50_by_operator_ruling(self) -> None:
         assert DEFAULT_MAX_DELETE == 50
 
-    def test_emitted_on_agent_surfaces(self, registry_dir: Path) -> None:
-        """The existing agent scratch/memory jobs gain the bound too.
+    def test_percentage_backstop_is_high_on_purpose(self) -> None:
+        assert BISYNC_MAX_DELETE_PERCENT == 90
 
-        Fails against 0.4: BISYNC_BASELINE_FLAGS carried no --max-delete at all.
-        """
+    def test_count_emitted_on_agent_surfaces(self, registry_dir: Path) -> None:
         reg, h = load_main(registry_dir / "sync" / "top.yml")
         agents, _ = load_agent_registry(registry_dir / "agent_registry.yml")
         plan = compile_plan(reg, "top.yml", h, agent_registry=agents)
@@ -53,24 +63,44 @@ class TestMaxDelete:
                    if i.mode == "bisync" and i.enabled and i.env_vars]
         assert bisyncs, "fixture should produce at least one agent bisync instance"
         for inst in bisyncs:
-            assert "--max-delete 50" in inst.env_vars["BISYNC_FLAGS"]
+            assert inst.env_vars["MAX_DELETE"] == "50"
 
-    def test_emitted_on_folder_scope(self, job_registry: Path) -> None:
+    def test_count_emitted_on_folder_scope(self, job_registry: Path) -> None:
         reg, h = load_main(job_registry)
         plan = compile_plan(reg, "job.yml", h)
-        assert "--max-delete 50" in _bisync(plan, "mico_data").env_vars["BISYNC_FLAGS"]
+        assert _bisync(plan, "mico_data").env_vars["MAX_DELETE"] == "50"
 
-    def test_per_scope_override_wins(self, job_registry: Path) -> None:
+    def test_the_count_is_NEVER_passed_to_rclone(self, job_registry: Path) -> None:
+        """The 0.5 bug, guarded.
+
+        0.5 emitted the scope's count as rclone's --max-delete. For bisync that
+        flag is a percentage, so 50 meant 50% and tripped on a near-empty side.
+        """
+        reg, h = load_main(job_registry)
+        reg.drive_folders[0].max_delete = 7
+        plan = compile_plan(reg, "job.yml", h)
+        flags = _bisync(plan, "mico_data").env_vars["BISYNC_FLAGS"]
+        assert "--max-delete 7" not in flags
+        assert "--max-delete 90" in flags
+
+    def test_percentage_backstop_is_the_same_whatever_the_count(
+        self, job_registry: Path
+    ) -> None:
+        reg, h = load_main(job_registry)
+        plan_a = compile_plan(reg, "job.yml", h)
+        reg.drive_folders[0].max_delete = 999
+        plan_b = compile_plan(reg, "job.yml", h)
+        assert (_bisync(plan_a, "mico_data").env_vars["BISYNC_FLAGS"]
+                == _bisync(plan_b, "mico_data").env_vars["BISYNC_FLAGS"])
+
+    def test_per_scope_count_override_wins(self, job_registry: Path) -> None:
         reg, h = load_main(job_registry)
         reg.drive_folders[0].max_delete = 5
         plan = compile_plan(reg, "job.yml", h)
-        flags = _bisync(plan, "mico_data").env_vars["BISYNC_FLAGS"]
-        assert "--max-delete 5" in flags
-        assert "--max-delete 50" not in flags
+        assert _bisync(plan, "mico_data").env_vars["MAX_DELETE"] == "5"
 
     @pytest.mark.parametrize("bad", [-1, 0])
     def test_unlimited_and_zero_are_refused(self, bad: int) -> None:
-        """-1 is rclone's 'unlimited' — the exact condition this field prevents."""
         with pytest.raises(ValidationError, match="max_delete must be at least 1"):
             DriveFolder(
                 name="x", remote="r", folder="F",
@@ -170,4 +200,4 @@ class TestFolderScope:
         reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
         plan = compile_plan(reg, "arc.yml", h)
         assert reg.drive_folders == []
-        assert plan.schema_version == "0.5"
+        assert plan.schema_version == "0.6"
