@@ -252,13 +252,23 @@ class RcloneUser(BaseModel):
 
 ConflictPolicy = Literal["newer", "suffix"]
 
-# Operator ruling 2026-11-11: 50 deletes per run, for every two-way sync,
-# matching estate-manage's vault drive-sync. A scope may override it.
-# NEVER left to rclone's own default: 1.73.5 defaults --max-delete to -1
-# (unlimited) and the percent-based bisync default does not exist in that
-# version, so the bound must be emitted explicitly to mean the same thing
-# on every host.
+# TWO DIFFERENT BOUNDS, TWO DIFFERENT UNITS. Read this before changing either.
+#
+# `max_delete` on a scope is a COUNT OF FILES — the operator's 50 means fifty
+# files. It is NOT an rclone flag: rclone's --max-delete means a PERCENTAGE of
+# the files on a side when the command is `bisync` (it is a count for `sync`,
+# which is where the confusion came from). Measured live on AI Data by
+# estate-manage: --max-delete 50 tripped on a near-empty drive at 2 of 3 files,
+# 67%. So the count is emitted as its own env value, MAX_DELETE, and the
+# estate-side gate dry-runs and refuses the run when either side's planned
+# deletes exceed it.
 DEFAULT_MAX_DELETE = 50
+
+# rclone's own percentage backstop, emitted into BISYNC_FLAGS. Deliberately
+# high: it exists to stop a near-total wipe, not to express policy — the count
+# gate above is the policy. A low percentage is what bit us, because on a small
+# side any ordinary deletion is a large fraction of it.
+BISYNC_MAX_DELETE_PERCENT = 90
 
 
 class DriveFolder(BaseModel):

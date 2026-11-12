@@ -12,6 +12,7 @@ from pathlib import PurePosixPath
 
 from .errors import RegistryLoadError
 from .models import (
+    BISYNC_MAX_DELETE_PERCENT,
     Account,
     AgentRecord,
     AgentRegistry,
@@ -28,8 +29,8 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.2"
-SCHEMA_VERSION = "0.5"
+__version__ = "0.4.3"
+SCHEMA_VERSION = "0.6"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags
 # are added based on user's conflict_policy.
@@ -142,16 +143,20 @@ def conflict_resolve_flags(policy: str) -> str:
     return "--conflict-resolve=newer"  # pragma: no cover — pydantic blocks this
 
 
-def bisync_flags(conflict_policy: str, max_delete: int) -> str:
+def bisync_flags(conflict_policy: str) -> str:
     """Flags for one bisync instance.
 
-    `--max-delete` is emitted on EVERY bisync, always as an explicit integer.
-    rclone 1.73.5 defaults it to -1 (unlimited) and has no percent-based bisync
-    default, so leaving it off means the compiled plan means different things on
-    different hosts. The value is bounded >= 1 at the model.
+    `--max-delete` here is rclone's PERCENTAGE backstop, not the scope's count.
+    For `rclone bisync` the flag is a percentage of the files on a side, so the
+    scope's `max_delete` must NOT be passed to it: estate-manage measured
+    --max-delete 50 tripping on a near-empty drive at 2 of 3 files (67%). The
+    count travels separately as MAX_DELETE, for the estate-side gate.
+
+    Always emitted explicitly: leaving it off means the plan depends on the
+    host's rclone defaults.
     """
     return (
-        f"{BISYNC_BASELINE_FLAGS} --max-delete {max_delete} "
+        f"{BISYNC_BASELINE_FLAGS} --max-delete {BISYNC_MAX_DELETE_PERCENT} "
         f"{conflict_resolve_flags(conflict_policy)}"
     )
 
@@ -179,7 +184,8 @@ def bisync_env_vars(
         "RCLONE_CONFIG": registry.platform.rclone_config,
         "LOCAL_PATH": local_path,
         "REMOTE_PATH": surface.remote or "",
-        "BISYNC_FLAGS": bisync_flags(surface.conflict_policy, surface.max_delete),
+        "BISYNC_FLAGS": bisync_flags(surface.conflict_policy),
+        "MAX_DELETE": str(surface.max_delete),
         "EXCLUDE_PATTERNS": bisync_excludes(),
     }
 
@@ -203,7 +209,8 @@ def folder_env_vars(
         "RCLONE_CONFIG": registry.platform.rclone_config,
         "LOCAL_PATH": folder.local_path,
         "REMOTE_PATH": f"{folder.remote}:{folder.folder}",
-        "BISYNC_FLAGS": bisync_flags(folder.conflict_policy, folder.max_delete),
+        "BISYNC_FLAGS": bisync_flags(folder.conflict_policy),
+        "MAX_DELETE": str(folder.max_delete),
         "EXCLUDE_PATTERNS": bisync_excludes(),
     }
 

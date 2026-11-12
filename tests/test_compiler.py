@@ -197,7 +197,7 @@ class TestCompilePlan:
                             agent_registry=agents,
                             agent_registry_path="/path/agent_registry.yml",
                             agent_registry_hash="def")
-        assert plan.schema_version == "0.5"
+        assert plan.schema_version == "0.6"
         assert plan.source_file == "/path/arc.yml"
         assert plan.source_hash == "abc"
         assert plan.agent_registry_path == "/path/agent_registry.yml"

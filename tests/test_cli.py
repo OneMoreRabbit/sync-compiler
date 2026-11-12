@@ -25,7 +25,7 @@ class TestCompileCommand:
         assert output.exists()
         data = yaml.safe_load(output.read_text(encoding="utf-8"))
         assert data["org"] == "arc"
-        assert data["meta"]["schema_version"] == "0.5"
+        assert data["meta"]["schema_version"] == "0.6"
         assert "agent_registry_path" in data["meta"]
         assert "agent_registry_hash" in data["meta"]
 
