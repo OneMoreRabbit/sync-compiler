@@ -26,7 +26,7 @@ Publish this session's Atlas outputs. Work in the vault clone at $ATLAS_VAULT (d
       so the step-4 stamp survives:
       git -C "$ATLAS_VAULT" checkout -- registry/graph.md dashboard.md \
           registry/.compiled 'components/*/component.md' \
-          ':(exclude)components/<name>/component.md'
+          ':(exclude)components/sync-compile/component.md'
    c. Stage your authored files BY PATH (components/<name>/**, any ADR, any io-graph
       edge naming you) — never `git add -A`, which picks up anything regenerated.
    d. Commit on branch atlas/<name>/<topic>, push, and open a PR against the vault's
