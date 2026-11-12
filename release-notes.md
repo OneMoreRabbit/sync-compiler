@@ -13,6 +13,44 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.4.3 — 2026-11-12
+
+**TL;DR:** emits compiled-sync-plan **0.6** — the delete bound is now a file COUNT in
+its own env var, because rclone's `--max-delete` means a PERCENTAGE for bisync.
+
+- **`MAX_DELETE` carries the count** (default 50 files) in every bisync instance's
+  `env_vars`. estate-fileserver's wrapper dry-runs, counts planned deletes per side,
+  and refuses the run when either side exceeds it. The name is fixed at the consumer's
+  request so the wrapper reads a constant.
+- **`BISYNC_FLAGS` now carries `--max-delete 90`**, a fixed percentage backstop against
+  a near-total wipe. It is not the scope's count and is not per-scope: a *low*
+  percentage is what failed, because on a small side any ordinary deletion is a large
+  fraction of it.
+- The contract states both units in a table and then says the wrong readings out loud,
+  under "what a consumer must not do".
+
+**Two corrections to the v0.4.2 entry above.** It is left as written — a tagged entry is
+not rewritten — so the record is here:
+
+1. **v0.4.2 passed the scope's count to rclone, which was wrong for bisync.**
+   `rclone sync`'s `--max-delete` is a count (default `-1`); `rclone bisync`'s is a
+   *percentage* (default 50). Both estate measurements were true of different commands.
+   Measured live by estate-manage: `--max-delete 50` tripped on a near-empty AI Data
+   drive at 2 of 3 files, 67%. If you installed 0.4.2, upgrade — its bound is a
+   percentage wearing a count's clothes.
+2. **"Unbounded" overstated the original defect.** Pre-0.5 bisync jobs emitted no
+   `--max-delete` and so took rclone's bisync default, which is 50% — a loose bound,
+   not no bound. The v0.4.2 entry calls it unlimited; that was the `sync` default
+   quoted against a `bisync` job.
+3. v0.4.2's "inert until arc declares `agent_mount_base`" is also overtaken: the ruled
+   path is PR 20 setting `agent_arc_exec`'s surfaces `enabled: false`, after which arc
+   compiles without that field. The bound applies to every *enabled* bisync, and arc
+   has none until ADR-0010 stage 3; every new `drive_folders` scope carries it from
+   day one.
+
+**Action:** estate-fileserver reads `MAX_DELETE` as a file count and must not pass it to
+rclone. Plan `schema_version` moves 0.5 → 0.6.
+
 ## v0.4.2 — 2026-11-11
 
 **TL;DR:** emits compiled-sync-plan **0.5** — org Drive folder scopes, OAuth by token
