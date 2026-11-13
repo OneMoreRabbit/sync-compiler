@@ -68,9 +68,20 @@ def test_the_guard_is_actually_looking_at_something() -> None:
 
 def test_no_other_compiler_is_imported() -> None:
     """sync_compiler imports none of rbac_compiler, agent_compile, image_compile."""
+    files = _python_files()
+
+    # Self-contained emptiness check (need point 5), repeated here rather than
+    # left to the sibling test above: a moved or renamed src/ would otherwise
+    # make THIS test sweep nothing and pass, and it is this test whose silence
+    # gets trusted.
+    assert files, (
+        f"no Python files found under {PACKAGE} — the guard checked nothing. "
+        "If the package moved, fix PACKAGE; do not delete this assertion."
+    )
+
     offences: list[str] = []
 
-    for path in _python_files():
+    for path in files:
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         for name in _imported_names(tree):
