@@ -29,13 +29,20 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.4"
-SCHEMA_VERSION = "0.6"
+__version__ = "0.4.5"
+SCHEMA_VERSION = "0.7"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags
 # are added based on user's conflict_policy.
+# --no-update-dir-modtime: a two-way sync must not set times on folders its
+# user does not own. Without it, one chtimes failure on a seat-owned folder is
+# critical to rclone and every later pass ends "out of sync, run --resync":
+# Mico Data refused 212 consecutive passes from 2026-11-13 (estate-manage,
+# hub #14069). The flag removes the operation that cannot succeed; it grants no
+# access — the sync user's share-group membership is the other half, and lives
+# in the RBAC registry, not here.
 BISYNC_BASELINE_FLAGS = (
-    "--resilient --recover --check-access --max-lock 5m"
+    "--resilient --recover --check-access --max-lock 5m --no-update-dir-modtime"
 )
 
 # Bisync excludes (avoid syncing temp / .DS_Store / partial-download junk)

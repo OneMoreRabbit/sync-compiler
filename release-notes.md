@@ -13,6 +13,33 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.4.5 — 2026-11-15
+
+**TL;DR:** emits compiled-sync-plan **0.7** — every two-way sync now carries
+`--no-update-dir-modtime`, so a folder the sync user does not own cannot stop the sync.
+
+- **The outage this fixes.** Mico Data (org `job`) completed no pass between
+  2026-11-13 13:15 UTC and 2026-11-15 — **212 refused passes**. As `rclone_job` it
+  could not set the time on a folder the Mico Manager seat owns; rclone treats that as
+  critical, and every later pass ended "path1 and path2 are out of sync, run
+  `--resync`". Measured by estate-manage (hub #14069).
+- **The delete bounds were not involved.** Worth saying because "a two-way sync stopped
+  dead" reads like the `MAX_DELETE` count tripping, and it was not.
+- The flag removes the operation that cannot succeed. **It grants no access** — the sync
+  user's membership of the share group is the other half of the fix, and it lives in the
+  RBAC registry's `seats:` list, not in anything this compiler emits.
+- Also in this release: the **import guard** asked of all four compilers (constitution
+  principle 2) — one test reading every module with `ast`, failing if `sync_compiler`
+  imports `rbac_compiler`, `agent_compile` or `image_compile`, and failing if it finds
+  no files to read.
+
+**Nothing for consumers to change.** `BISYNC_FLAGS` gains one flag inside a string
+consumers already pass to rclone verbatim; no key is added, removed or renamed. Plan
+`schema_version` moves 0.6 → 0.7.
+
+**Not verified here:** rclone is not installed on this seat, so the flag's behaviour was
+not confirmed locally. estate-manage ran it in their play as a stopgap first.
+
 ## v0.4.4 — 2026-11-12
 
 **TL;DR:** refuses a per-agent `shares:` override of `memory`, `sessions` or `scratch`
