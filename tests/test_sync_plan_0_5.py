@@ -108,6 +108,33 @@ class TestMaxDelete:
             )
 
 
+class TestFolderTimesAreNotSet:
+    """0.7: a two-way sync must not set times on folders its user does not own.
+
+    Mico Data refused 212 consecutive passes from 2026-11-13 because rclone, as
+    the org's sync user, could not chtimes a folder the seat owned — rclone
+    treats that as critical and then demands a --resync. Nothing pinned the
+    flag string before this, so its absence was invisible to the suite.
+    """
+
+    def test_flag_on_folder_scope(self, job_registry: Path) -> None:
+        reg, h = load_main(job_registry)
+        plan = compile_plan(reg, "job.yml", h)
+        flags = _bisync(plan, "mico_data").env_vars["BISYNC_FLAGS"]
+        assert "--no-update-dir-modtime" in flags
+
+    def test_flag_on_agent_surfaces_too(self, registry_dir: Path) -> None:
+        """The agent surfaces get it as well — same hazard, same fix."""
+        reg, h = load_main(registry_dir / "sync" / "top.yml")
+        agents, _ = load_agent_registry(registry_dir / "agent_registry.yml")
+        plan = compile_plan(reg, "top.yml", h, agent_registry=agents)
+        bisyncs = [i for i in plan.sync_instances
+                   if i.mode == "bisync" and i.enabled and i.env_vars]
+        assert bisyncs
+        for inst in bisyncs:
+            assert "--no-update-dir-modtime" in inst.env_vars["BISYNC_FLAGS"]
+
+
 # ── 2. auth.type: oauth, by token FILE reference ─────────────────────────────
 
 class TestOAuthTokenReference:
@@ -200,4 +227,4 @@ class TestFolderScope:
         reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
         plan = compile_plan(reg, "arc.yml", h)
         assert reg.drive_folders == []
-        assert plan.schema_version == "0.6"
+        assert plan.schema_version == "0.7"
