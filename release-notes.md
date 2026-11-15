@@ -37,12 +37,19 @@ reports — link them, don't repeat them.
 consumers already pass to rclone verbatim; no key is added, removed or renamed. Plan
 `schema_version` moves 0.6 → 0.7.
 
-**Not observed to work yet.** rclone is not installed on this seat, so the flag's
-behaviour was not confirmed here, and as of writing nobody has reported a two-way pass
-completing with it: estate-manage was asked to add it to its play as a stopgap, and has
-not reported back. The reasoning is from rclone's documented behaviour and
-estate-manage's measurement of the failure, not from a successful pass. What settles it:
-did a pass of Mico Data complete after the flag was added?
+**The flag runs; it is not yet shown to fix the failure.** Two claims, and only the
+first is measured.
+
+- **Measured** (estate-manage, hub #14081): ansible `c350c61` put the flag in both
+  two-way env files on beaver from 19:10 UTC 2026-11-15, and the AI Data pass at
+  19:15 UTC exited 0 with 0 planned deletes. So rclone on beaver accepts the flag and a
+  healthy two-way sync still passes with it — which rules out a regression.
+- **Not measured**: that the flag lets the *failing* sync pass. Mico Data still refuses
+  until a `--resync`, which waits on the sync user joining the share group and then on
+  the operator.
+
+What settles it: did a pass of Mico Data complete after the flag was added? sync-compile
+has run none of this — rclone is not installed on this seat.
 
 ## v0.4.4 — 2026-11-12
 
