@@ -37,6 +37,28 @@ reports — link them, don't repeat them.
 consumers already pass to rclone verbatim; no key is added, removed or renamed. Plan
 `schema_version` moves 0.6 → 0.7.
 
+**Mico Data syncs again — with three fixes in place, not this one alone.** Measured on
+beaver by estate-manage (hub #14099); sync-compile ran none of it, and rclone is not
+installed on this seat.
+
+- **Mico Data, first good pass with the flag:** the 20:00 UTC timed pass on 2026-11-15
+  exited 0 at 20:00:42, 0 planned deletes on each side. The 19:45 pass met the resync's
+  lock (exit 1, nothing synced).
+- Both sync users joined their share's group at 19:31 UTC (ansible `5d92732`); below Mico
+  Data the sync user then had 0 entries it could not read. Mico Data was resynced on the
+  operator's word, 19:38–19:46 UTC, exit 0, 0 deletes.
+- **AI Data** passed at 19:15, 19:30, 19:45 and 20:00 with the flag — a healthy sync is
+  unaffected, so the flag causes no regression.
+
+**What this does not show: the flag on its own.** The good pass came after the group fix
+and the resync as well, so the evidence is that the three together work, not which one
+did it. Anyone reading back for the cause of the recovery should know all three landed
+inside half an hour.
+
+**Nothing for consumers to change.** `BISYNC_FLAGS` gains one flag inside a string
+consumers already pass to rclone verbatim; no key is added, removed or renamed. Plan
+`schema_version` moves 0.6 → 0.7.
+
 **The flag runs; it is not yet shown to fix the failure.** Two claims, and only the
 first is measured.
 
