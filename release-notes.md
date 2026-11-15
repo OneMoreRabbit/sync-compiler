@@ -37,8 +37,12 @@ reports — link them, don't repeat them.
 consumers already pass to rclone verbatim; no key is added, removed or renamed. Plan
 `schema_version` moves 0.6 → 0.7.
 
-**Not verified here:** rclone is not installed on this seat, so the flag's behaviour was
-not confirmed locally. estate-manage ran it in their play as a stopgap first.
+**Not observed to work yet.** rclone is not installed on this seat, so the flag's
+behaviour was not confirmed here, and as of writing nobody has reported a two-way pass
+completing with it: estate-manage was asked to add it to its play as a stopgap, and has
+not reported back. The reasoning is from rclone's documented behaviour and
+estate-manage's measurement of the failure, not from a successful pass. What settles it:
+did a pass of Mico Data complete after the flag was added?
 
 ## v0.4.4 — 2026-11-12
 
