@@ -265,4 +265,4 @@ class TestFolderScope:
         reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
         plan = compile_plan(reg, "arc.yml", h)
         assert reg.drive_folders == []
-        assert plan.schema_version == "0.9"
+        assert plan.schema_version == "0.10"

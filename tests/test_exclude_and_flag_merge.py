@@ -13,9 +13,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from sync_compiler.compiler import _merge_flags, _merge_list, env_vars
+from sync_compiler.compiler import (
+    _merge_flags,
+    _merge_list,
+    compile_plan,
+    env_vars,
+    resolved_sync_defaults,
+)
 from sync_compiler.loader import load_main
-from sync_compiler.models import Account, Drive, SyncDefaults
+from sync_compiler.models import DEFAULT_MAX_DELETE, Account, Drive, SyncDefaults
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -118,3 +124,94 @@ class TestFlagMerge:
     def test_merge_list_still_dedupes_for_patterns(self) -> None:
         """Patterns keep the union merge: a repeated pattern is a no-op."""
         assert _merge_list(["*.tmp"], ["*.tmp", "archive/**"]) == ["*.tmp", "archive/**"]
+
+
+class TestOneWayMaxDelete:
+    """0.10: a one-way sync carries the same COUNT bound as a two-way one.
+
+    Operator ruling 2026-11-17. Emitted as MAX_DELETE for the estate wrapper,
+    which dry-runs and refuses the run above it. NEVER passed to rclone as
+    --max-delete: for a one-way sync that is a count, but it stops part-way
+    through a run instead of refusing it, which is the opposite of the point.
+    """
+
+    def test_default_is_50(self) -> None:
+        assert _defaults().max_delete == DEFAULT_MAX_DELETE == 50
+
+    @pytest.mark.parametrize("bad", [-1, 0])
+    def test_unlimited_and_zero_are_refused(self, bad: int) -> None:
+        with pytest.raises(ValidationError, match="must be at least 1"):
+            _defaults(max_delete=bad)
+
+    def test_emitted_on_every_one_way_instance(self) -> None:
+        reg, h = load_main(FIXTURES / "valid" / "arc.yml")
+        plan = compile_plan(reg, "arc.yml", h)
+        oneway = [i for i in plan.sync_instances
+                  if i.mode == "sync" and i.enabled and i.env_vars]
+        assert oneway
+        for inst in oneway:
+            assert inst.env_vars["MAX_DELETE"] == "50"
+
+    def test_never_reaches_rclone_as_a_flag(self) -> None:
+        """The count must not become --max-delete on a one-way sync."""
+        reg, h = load_main(FIXTURES / "valid" / "arc.yml")
+        reg.accounts[0].sync_defaults.max_delete = 7
+        plan = compile_plan(reg, "arc.yml", h)
+        inst = next(i for i in plan.sync_instances
+                    if i.mode == "sync" and i.enabled and i.env_vars)
+        assert inst.env_vars["MAX_DELETE"] == "7"
+        assert "--max-delete" not in inst.env_vars["SYNC_FLAGS"]
+
+    def test_a_drive_override_wins(self) -> None:
+        r = resolved_sync_defaults(_defaults(max_delete=50), {"max_delete": 5}, [])
+        assert r.max_delete == 5
+
+
+class TestUserlessOrgIsNotWarned:
+    """0.10: no 'unprovisioned remote' warning when nothing declares one.
+
+    An org whose rclone_users entries all omit remote_name is the deliberately
+    userless shape — a personal org reaching its Drive by oauth. Warning that
+    its account is unprovisioned says nothing true (arch, hub #14607).
+    """
+
+    def _result(self, users, account_remote="drive"):
+        from sync_compiler.models import RegistryMain
+        from sync_compiler.registry import _validate_rclone_users
+
+        class R:
+            def __init__(self):
+                self.warnings = []
+                self.errors = []
+            def warn(self, m, **kw):
+                self.warnings.append(m)
+            def error(self, m, **kw):
+                self.errors.append(m)
+
+        main = RegistryMain.model_validate({
+            "meta": {"version": "0.4"},
+            "org": "arc",
+            "rclone_users": users,
+            "platform": {"rclone_user": "rclone_arc", "local_base": "/mnt/raid/arc",
+                         "rclone_config": "/var/lib/rclone/rclone.conf"},
+            "accounts": [{
+                "remote_name": account_remote, "provider": "drive",
+                "auth": {"type": "service_account",
+                         "service_account_file": "/etc/rclone-sa/x.json"},
+                "sync_defaults": {"local_subdir": "drive", "schedule": "*:0/15"},
+                "drives": [],
+            }],
+        })
+        r = R()
+        _validate_rclone_users(main, Path("arc.yml"), r)
+        return r
+
+    def test_userless_org_gets_no_warning(self) -> None:
+        r = self._result([{"user": "rclone_arc"}])
+        assert not [w for w in r.warnings if "no matching remote_name" in w]
+
+    def test_an_unmatched_account_still_warns(self) -> None:
+        """The case the warning exists for keeps working."""
+        r = self._result([{"user": "rclone_arc", "remote_name": "other",
+                           "provider": "drive"}])
+        assert [w for w in r.warnings if "no matching remote_name" in w]
