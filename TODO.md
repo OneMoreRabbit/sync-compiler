@@ -42,6 +42,29 @@ Read `/var/lib/rclone-sync/status/*.json` (written by the sync wrapper) and pres
 
 ---
 
+## Pending contract notes
+
+Things owed to `compiled-sync-plan` at its **next revision for another reason** —
+not worth a version of their own. Recorded here because a note that lives only in
+a hub message expires silently.
+
+### §3: a flag that quiets rclone's output makes every one-way run refused
+From arch, hub #14686, found by estate-manage reviewing the estate's count check.
+
+The check counts the deletes a dry run reports, and a flag that quiets or moves
+rclone's output made it count **zero**. The check now refuses any dry run that
+printed no summary. So one of these in `overrides.sync_flags` (or an account's
+`sync_flags`) on a one-way sync means **every run of that sync is refused**:
+
+    -q / --quiet, --log-file, --log-level ERROR, --use-json-log
+
+Checked against the estate's registry copy 2026-11-17: **0 such flags in use**
+across arc, job and top (arc has 5 sync_flags, none of them these).
+
+The compiler is **not** being asked to refuse these flags — arch said so
+explicitly. Only to say it in §3, so a registry author learns it from the
+contract rather than from a sync that never runs.
+
 ## Known hazards
 
 ### FIXED in v0.4.7 — `_merge_list` corrupting a flag written as two items
