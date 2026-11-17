@@ -23,9 +23,9 @@ reports — link them, don't repeat them.
   written into every account by hand and kept there. 0.8 adds a fixed baseline, merged
   with the registry's own flags and **deduped**, so an account already listing the flag
   is unaffected and no registry needs editing.
-- Two ARC one-way Drive copies had no good run for a day. **The folder date is one of
-  three causes, not the cause** — this fixes the one that is sync-compile's and does not
-  on its own fix those copies.
+- Two ARC one-way Drive copies have **failed on every run since at least 2026-09-15**.
+  **The folder date is one of three causes, not the cause** — this fixes the one that is
+  sync-compile's and does not on its own fix those copies.
 
 **Measured:** a real compile of `arc` emits
 `SYNC_FLAGS: --no-update-dir-modtime --use-server-modtime --fast-list` on both one-way
