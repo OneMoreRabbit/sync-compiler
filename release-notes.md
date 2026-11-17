@@ -13,6 +13,35 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.4.7 — 2026-11-17
+
+**TL;DR:** emits compiled-sync-plan **0.9** — closes two ways a value in the plan could
+reach rclone as a stray **positional** argument.
+
+Both have one shape: a value that word-splits at the consumer into loose words. On an
+`rclone sync` command positional arguments are the source and destination, so neither is
+a missed option — each changes what the command operates on.
+
+- **Whitespace in an exclude pattern is now refused at compile time**, in all three
+  layers that feed `EXCLUDE_PATTERNS`. `--exclude=/a/Weekly sync Recording` arrived as
+  `--exclude=/a/Weekly` plus `sync` and `Recording`. Layer 2 (`drives[].overrides`)
+  needed its own check — it is a free-form map, so the model's validator did not reach
+  it, and it is the layer a per-drive exclusion is actually written in.
+- **A repeated flag keeps its value.** The merge removed repeated tokens, so
+  `--max-age 7d --max-age 30d` became `--max-age 7d 30d`, orphaning `30d`. Repeats
+  within the registry's own flags are now kept (rclone takes the last value); only an
+  item exactly equalling a compiler-added baseline flag is dropped. Exclude patterns keep
+  the deduping merge, where a repeat is a no-op.
+
+**A path with spaces** is written with `?` for each space, with the literal path in a
+registry comment. Two cautions: `?` matches any character, so it can over-match and the
+failure is silent; and a pattern needing a literal `?` has no escape. `--exclude-from`
+is proposed in the contract and **not built**.
+
+**Nothing changes for any registry in use.** Compiling the estate's `arc` and `top` with
+0.4.6 and with this release gives plans identical apart from `meta`, and no pattern in
+use is refused. What changes is which registries are accepted.
+
 ## v0.4.6 — 2026-11-17
 
 **TL;DR:** emits compiled-sync-plan **0.8** — `--no-update-dir-modtime` now on every

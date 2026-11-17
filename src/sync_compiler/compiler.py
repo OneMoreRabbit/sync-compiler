@@ -29,8 +29,8 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.6"
-SCHEMA_VERSION = "0.8"
+__version__ = "0.4.7"
+SCHEMA_VERSION = "0.9"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags
 # are added based on user's conflict_policy.
@@ -68,7 +68,8 @@ def resolved_sync_defaults(
 ) -> SyncDefaults:
     schedule = overrides.get("schedule", defaults.schedule)
     local_subdir = overrides.get("local_subdir", defaults.local_subdir)
-    sync_flags = _merge_list(defaults.sync_flags, overrides.get("sync_flags", []))
+    # Flags, not patterns: repeats within the registry are kept (see _merge_flags).
+    sync_flags = list(defaults.sync_flags) + list(overrides.get("sync_flags", []))
     exclude_patterns = _merge_list(defaults.exclude_patterns, overrides.get("exclude_patterns", []))
     exclude_patterns = _merge_list(exclude_patterns, additional_excludes)
     return SyncDefaults(
@@ -80,12 +81,36 @@ def resolved_sync_defaults(
 
 
 def _merge_list(base: list[str], extras: list[str]) -> list[str]:
+    """Union of two lists, order preserved, repeats removed.
+
+    Used for exclude patterns, where a repeated pattern is a no-op and dropping
+    it is harmless. NOT used for flags — see `_merge_flags`.
+    """
     seen: set[str] = set()
     out: list[str] = []
     for item in list(base) + list(extras):
         if item not in seen:
             seen.add(item)
             out.append(item)
+    return out
+
+
+def _merge_flags(baseline: list[str], registry: list[str]) -> list[str]:
+    """Baseline flags then the registry's, removing only exact baseline repeats.
+
+    Repeats WITHIN the registry's own flags are kept, deliberately. Deduping
+    tokens corrupts a flag written as two items: with `--max-age 7d --max-age
+    30d`, dropping the repeated `--max-age` leaves `30d` as a stray POSITIONAL
+    argument, which rclone reads as a path — so a deduping merge could silently
+    change what the command operates on. rclone takes the last value for a
+    repeated flag, so leaving repeats alone is both safe and what the author
+    meant (arch ruling, hub #14440).
+
+    An exact repeat of a baseline flag is still removed, since that is a
+    duplicate of something the compiler added and carries no value with it.
+    """
+    out = list(baseline)
+    out.extend(flag for flag in registry if flag not in set(baseline))
     return out
 
 
@@ -134,7 +159,7 @@ def env_vars(
     drive: Drive,
     resolved: SyncDefaults,
 ) -> dict[str, str]:
-    sync_flags = " ".join(_merge_list(list(SYNC_BASELINE_FLAGS), resolved.sync_flags))
+    sync_flags = " ".join(_merge_flags(list(SYNC_BASELINE_FLAGS), resolved.sync_flags))
     exclude_patterns = " ".join(f"--exclude={p}" for p in resolved.exclude_patterns)
     return {
         "RCLONE_USER": registry.platform.rclone_user,
