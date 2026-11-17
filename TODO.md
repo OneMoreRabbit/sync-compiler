@@ -48,6 +48,20 @@ Things owed to `compiled-sync-plan` at its **next revision for another reason** 
 not worth a version of their own. Recorded here because a note that lives only in
 a hub message expires silently.
 
+### component.md: beaver's version and the limit being in force
+From arch, hub #14760. Fold into the **next vault PR raised for another
+reason**; arch said no PR for this alone.
+
+Two facts to write:
+- beaver runs **v0.4.8 since 2026-11-17 14:22 UTC**, with the estate's count
+  check for one-way runs. Install, compile of all orgs and apply all exited 0;
+  `MAX_DELETE=50` on arc's five one-way syncs; nothing refused.
+- **The one-way delete limit is now in force.** Both halves exist for the
+  first time: this compiler emits the count, and the estate's wrapper reads it
+  and refuses a run above it. Until 14:22 UTC the number was emitted and
+  unread. The page should not leave a reader thinking it has been enforced
+  since v0.4.8 was tagged.
+
 ### §3: a flag that quiets rclone's output makes every one-way run refused
 From arch, hub #14686, found by estate-manage reviewing the estate's count check.
 
