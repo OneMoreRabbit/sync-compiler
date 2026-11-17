@@ -64,6 +64,25 @@ class Drive(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
     description: str | None = None
 
+    @model_validator(mode="after")
+    def override_max_delete_bounded(self) -> Drive:
+        """A drive's own `max_delete`, refused below 1 and NAMING THE DRIVE.
+
+        The shared check reports the field it was given, so an override caught
+        inside `resolved_sync_defaults` would say `sync_defaults.max_delete` —
+        sending a reader to the account's defaults when the bad value is on one
+        drive. Checked here, where the drive's name is in hand.
+        """
+        if "max_delete" in self.overrides:
+            value = self.overrides["max_delete"]
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(
+                    f"drive '{self.local_name}': overrides.max_delete must be an "
+                    f"integer, not {type(value).__name__}"
+                )
+            _check_max_delete(value, f"drive '{self.local_name}': overrides.max_delete")
+        return self
+
     @field_validator("overrides")
     @classmethod
     def override_patterns_have_no_whitespace(cls, v: dict[str, Any]) -> dict[str, Any]:
@@ -249,6 +268,44 @@ def _reject_whitespace_in_patterns(patterns: list[str], field: str) -> list[str]
     return patterns
 
 
+ConflictPolicy = Literal["newer", "suffix"]
+
+# TWO DIFFERENT BOUNDS, TWO DIFFERENT UNITS. Read this before changing either.
+#
+# `max_delete` on a scope is a COUNT OF FILES — the operator's 50 means fifty
+# files. It is NOT an rclone flag: rclone's --max-delete means a PERCENTAGE of
+# the files on a side when the command is `bisync` (it is a count for `sync`,
+# which is where the confusion came from). Measured live on AI Data by
+# estate-manage: --max-delete 50 tripped on a near-empty drive at 2 of 3 files,
+# 67%. So the count is emitted as its own env value, MAX_DELETE, and the
+# estate-side gate dry-runs and refuses the run when either side's planned
+# deletes exceed it.
+DEFAULT_MAX_DELETE = 50
+
+# rclone's own percentage backstop, emitted into BISYNC_FLAGS. Deliberately
+# high: it exists to stop a near-total wipe, not to express policy — the count
+# gate above is the policy. A low percentage is what bit us, because on a small
+# side any ordinary deletion is a large fraction of it.
+BISYNC_MAX_DELETE_PERCENT = 90
+
+
+def _check_max_delete(v: int, field: str) -> int:
+    """A bound that does not bound is not a bound.
+
+    Shared by the two-way surfaces and (0.10) the one-way syncs, so the rule
+    cannot drift apart between the two kinds. rclone reads -1 as unlimited and
+    0 as delete-nothing; to pause a scope set `enabled: false` rather than
+    neutering its bound.
+    """
+    if v < 1:
+        raise ValueError(
+            f"{field} must be at least 1: got {v}. "
+            "rclone treats -1 as unlimited, which is the condition this field "
+            "exists to prevent; to pause a sync, set enabled: false."
+        )
+    return v
+
+
 class SyncDefaults(BaseModel):
     """Per-account defaults applied to all drives unless overridden."""
 
@@ -256,6 +313,16 @@ class SyncDefaults(BaseModel):
     schedule: str
     sync_flags: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)
+    # 0.10: the same COUNT OF FILES the two-way syncs carry, for one-way syncs.
+    # Operator ruling 2026-11-17. Emitted as MAX_DELETE; never passed to rclone
+    # as --max-delete, which for a one-way sync is a count but stops part-way
+    # through a run instead of refusing it.
+    max_delete: int = DEFAULT_MAX_DELETE
+
+    @field_validator("max_delete")
+    @classmethod
+    def max_delete_bounded(cls, v: int) -> int:
+        return _check_max_delete(v, "sync_defaults.max_delete")
 
     @field_validator("exclude_patterns")
     @classmethod
@@ -327,27 +394,6 @@ class RcloneUser(BaseModel):
     impersonate: str | None = None
 
 
-ConflictPolicy = Literal["newer", "suffix"]
-
-# TWO DIFFERENT BOUNDS, TWO DIFFERENT UNITS. Read this before changing either.
-#
-# `max_delete` on a scope is a COUNT OF FILES — the operator's 50 means fifty
-# files. It is NOT an rclone flag: rclone's --max-delete means a PERCENTAGE of
-# the files on a side when the command is `bisync` (it is a count for `sync`,
-# which is where the confusion came from). Measured live on AI Data by
-# estate-manage: --max-delete 50 tripped on a near-empty drive at 2 of 3 files,
-# 67%. So the count is emitted as its own env value, MAX_DELETE, and the
-# estate-side gate dry-runs and refuses the run when either side's planned
-# deletes exceed it.
-DEFAULT_MAX_DELETE = 50
-
-# rclone's own percentage backstop, emitted into BISYNC_FLAGS. Deliberately
-# high: it exists to stop a near-total wipe, not to express policy — the count
-# gate above is the policy. A low percentage is what bit us, because on a small
-# side any ordinary deletion is a large fraction of it.
-BISYNC_MAX_DELETE_PERCENT = 90
-
-
 class DriveFolder(BaseModel):
     """An org Drive folder synced two-way (compiled-sync-plan 0.5).
 
@@ -389,19 +435,7 @@ class DriveFolder(BaseModel):
     @field_validator("max_delete")
     @classmethod
     def max_delete_bounded(cls, v: int) -> int:
-        """A bound that does not bound is not a bound.
-
-        rclone reads -1 as unlimited and 0 as 'delete nothing'. Unlimited is the
-        defect this field exists to close, so it is refused outright rather than
-        quietly accepted.
-        """
-        if v < 1:
-            raise ValueError(
-                f"max_delete must be at least 1: got {v}. "
-                "rclone treats -1 as unlimited, which is the condition this field "
-                "exists to prevent; to pause a scope, set enabled: false."
-            )
-        return v
+        return _check_max_delete(v, "max_delete")
 
 
 class RegistryMain(BaseModel):
