@@ -74,12 +74,28 @@ class Drive(BaseModel):
         This is the layer a per-drive exclusion would actually be written in,
         so it is the one that most needs the check.
         """
-        patterns = v.get("exclude_patterns")
-        if isinstance(patterns, list):
-            _reject_whitespace_in_patterns(
-                [p for p in patterns if isinstance(p, str)],
-                "overrides.exclude_patterns",
-            )
+        for key in ("exclude_patterns", "sync_flags"):
+            if key not in v:
+                continue
+            value = v[key]
+            # A STRING here is the dangerous shape, not merely the wrong type:
+            # the merge does list(value), which walks a string letter by letter.
+            # `exclude_patterns: "*.log"` becomes ['*', '.', 'l', 'o', 'g'] and
+            # emits `--exclude=*` — excluding EVERYTHING, so the sync silently
+            # transfers nothing. Found by arch reviewing v0.4.7 (hub #14465).
+            if not isinstance(value, list):
+                raise ValueError(
+                    f"overrides.{key} must be a list, not "
+                    f"{type(value).__name__}. A string is split into single "
+                    f"characters by the merge: exclude_patterns: \"*.log\" "
+                    f"would emit --exclude=* and exclude everything. "
+                    f"Write it as a YAML list, one item per line."
+                )
+            if key == "exclude_patterns":
+                _reject_whitespace_in_patterns(
+                    [p for p in value if isinstance(p, str)],
+                    "overrides.exclude_patterns",
+                )
         return v
 
     @field_validator("id")

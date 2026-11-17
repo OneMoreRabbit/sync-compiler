@@ -33,6 +33,12 @@ a missed option — each changes what the command operates on.
   item exactly equalling a compiler-added baseline flag is dropped. Exclude patterns keep
   the deduping merge, where a repeat is a no-op.
 
+- **An override given as a string instead of a list is refused.**
+  `overrides.exclude_patterns: "*.log"` was walked letter by letter and emitted
+  `--exclude=*` — excluding everything, so the sync transferred nothing and reported
+  success. `overrides.sync_flags` had the same hole. Found by arch reviewing this
+  release.
+
 **A path with spaces** is written with `?` for each space, with the literal path in a
 registry comment. Two cautions: `?` matches any character, so it can over-match and the
 failure is silent; and a pattern needing a literal `?` has no escape. `--exclude-from`

@@ -70,6 +70,34 @@ class TestWhitespaceInExcludePatternsIsRefused:
         assert got == "--exclude=*.tmp --exclude=archive/**"
 
 
+class TestOverridesMustBeLists:
+    """Found by arch reviewing v0.4.7 (hub #14465).
+
+    A string here is the dangerous shape, not merely the wrong type: the merge
+    does list(value), which walks a string letter by letter, and
+    `exclude_patterns: "*.log"` then emits `--exclude=*` — excluding
+    EVERYTHING, so the sync silently transfers nothing.
+    """
+
+    @pytest.mark.parametrize("key", ["exclude_patterns", "sync_flags"])
+    def test_a_string_override_is_refused(self, key: str) -> None:
+        with pytest.raises(ValidationError, match="must be a list"):
+            Drive(id="x", cloud_name="c", local_name="l", enabled=True,
+                  overrides={key: "*.log"})
+
+    @pytest.mark.parametrize("key", ["exclude_patterns", "sync_flags"])
+    def test_a_proper_list_still_passes(self, key: str) -> None:
+        d = Drive(id="x", cloud_name="c", local_name="l", enabled=True,
+                  overrides={key: ["*.log"]})
+        assert d.overrides[key] == ["*.log"]
+
+    def test_unrelated_override_keys_are_untouched(self) -> None:
+        """overrides is free-form; only the two list keys are policed."""
+        d = Drive(id="x", cloud_name="c", local_name="l", enabled=True,
+                  overrides={"schedule": "*:0/30", "local_subdir": "other"})
+        assert d.overrides["schedule"] == "*:0/30"
+
+
 class TestFlagMerge:
     """arch ruling hub #14440: keep repeats, drop only exact baseline repeats."""
 
