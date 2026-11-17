@@ -108,6 +108,44 @@ class TestMaxDelete:
             )
 
 
+class TestOneWaySyncDoesNotSetFolderTimes:
+    """0.8: --no-update-dir-modtime on a one-way sync too.
+
+    Two ARC one-way copies failed on every run for the same reason the two-way
+    side did. Until 0.8 there was no baseline for SYNC_FLAGS at all — it came
+    entirely from the registry — so nothing could be fixed centrally.
+    """
+
+    def _sync_instances(self, plan):
+        return [i for i in plan.sync_instances
+                if i.mode == "sync" and i.enabled and i.env_vars]
+
+    def test_flag_on_every_one_way_sync(self, registry_dir_no_agents: Path) -> None:
+        reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
+        plan = compile_plan(reg, "arc.yml", h)
+        instances = self._sync_instances(plan)
+        assert instances, "fixture should produce at least one one-way sync"
+        for inst in instances:
+            assert "--no-update-dir-modtime" in inst.env_vars["SYNC_FLAGS"]
+
+    def test_registry_flags_are_kept(self, registry_dir_no_agents: Path) -> None:
+        """The baseline is added to the registry's flags, not instead of them."""
+        reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
+        plan = compile_plan(reg, "arc.yml", h)
+        flags = self._sync_instances(plan)[0].env_vars["SYNC_FLAGS"]
+        assert "--use-server-modtime" in flags
+        assert "--fast-list" in flags
+
+    def test_not_duplicated_when_the_registry_already_lists_it(
+        self, registry_dir_no_agents: Path
+    ) -> None:
+        reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
+        reg.accounts[0].sync_defaults.sync_flags.append("--no-update-dir-modtime")
+        plan = compile_plan(reg, "arc.yml", h)
+        flags = self._sync_instances(plan)[0].env_vars["SYNC_FLAGS"]
+        assert flags.count("--no-update-dir-modtime") == 1
+
+
 class TestFolderTimesAreNotSet:
     """0.7: a two-way sync must not set times on folders its user does not own.
 
@@ -227,4 +265,4 @@ class TestFolderScope:
         reg, h = load_main(registry_dir_no_agents / "sync" / "arc.yml")
         plan = compile_plan(reg, "arc.yml", h)
         assert reg.drive_folders == []
-        assert plan.schema_version == "0.7"
+        assert plan.schema_version == "0.8"

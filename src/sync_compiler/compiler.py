@@ -29,8 +29,8 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.5"
-SCHEMA_VERSION = "0.7"
+__version__ = "0.4.6"
+SCHEMA_VERSION = "0.8"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags
 # are added based on user's conflict_policy.
@@ -44,6 +44,16 @@ SCHEMA_VERSION = "0.7"
 BISYNC_BASELINE_FLAGS = (
     "--resilient --recover --check-access --max-lock 5m --no-update-dir-modtime"
 )
+
+# Baseline flags for a ONE-WAY sync. Until 0.8 there were none: SYNC_FLAGS came
+# entirely from the registry, so a fix had to be written into every account.
+#
+# --no-update-dir-modtime for the same reason as the two-way side: rclone must
+# not try to set times on folders its user does not own. Two ARC one-way copies
+# failed on every run for this (agenteco-needs-arc-one-way-sync-faults-v0_1).
+# Merged with the registry's own flags, deduped, so an account that already
+# lists it is unaffected.
+SYNC_BASELINE_FLAGS = ("--no-update-dir-modtime",)
 
 # Bisync excludes (avoid syncing temp / .DS_Store / partial-download junk)
 DEFAULT_BISYNC_EXCLUDES = ("*.tmp", ".DS_Store", ".partial.*")
@@ -124,7 +134,7 @@ def env_vars(
     drive: Drive,
     resolved: SyncDefaults,
 ) -> dict[str, str]:
-    sync_flags = " ".join(resolved.sync_flags)
+    sync_flags = " ".join(_merge_list(list(SYNC_BASELINE_FLAGS), resolved.sync_flags))
     exclude_patterns = " ".join(f"--exclude={p}" for p in resolved.exclude_patterns)
     return {
         "RCLONE_USER": registry.platform.rclone_user,

@@ -42,6 +42,25 @@ Read `/var/lib/rclone-sync/status/*.json` (written by the sync wrapper) and pres
 
 ---
 
+## Known hazards
+
+### `_merge_list` can corrupt a flag written as two items
+Found by arch reviewing v0.4.6 (hub #14436), and confirmed:
+
+    _merge_list([], ["--max-age", "7d", "--max-age", "30d"])
+    -> ["--max-age", "7d", "30d"]
+
+The repeated `--max-age` is deduped away and `30d` is left as a stray
+positional argument, which rclone would read as a path. Any flag repeated with
+a different value corrupts the same way.
+
+Not reachable with today's registries — `sync_flags` in use are single-item
+flags (`--use-server-modtime`, `--fast-list`) — and it predates the v0.4.6
+baseline, which merely makes the merge happen for every org rather than only
+where a registry set flags. Fix at the next version that touches flag
+handling: dedupe whole flags, not tokens, or do not dedupe `sync_flags` at all
+and let rclone's last-wins apply.
+
 ## Provider support
 
 ### Dropbox / OneDrive
