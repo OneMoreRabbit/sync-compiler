@@ -64,6 +64,40 @@ class Drive(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
     description: str | None = None
 
+    @field_validator("overrides")
+    @classmethod
+    def override_patterns_have_no_whitespace(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Layer 2 of three: this drive's overrides.
+
+        `overrides` is a free-form dict, so it is not covered by SyncDefaults'
+        validator even though its `exclude_patterns` key is merged with it.
+        This is the layer a per-drive exclusion would actually be written in,
+        so it is the one that most needs the check.
+        """
+        for key in ("exclude_patterns", "sync_flags"):
+            if key not in v:
+                continue
+            value = v[key]
+            # A STRING here is the dangerous shape, not merely the wrong type:
+            # the merge does list(value), which walks a string letter by letter.
+            # `exclude_patterns: "*.log"` becomes ['*', '.', 'l', 'o', 'g'] and
+            # emits `--exclude=*` — excluding EVERYTHING, so the sync silently
+            # transfers nothing. Found by arch reviewing v0.4.7 (hub #14465).
+            if not isinstance(value, list):
+                raise ValueError(
+                    f"overrides.{key} must be a list, not "
+                    f"{type(value).__name__}. A string is split into single "
+                    f"characters by the merge: exclude_patterns: \"*.log\" "
+                    f"would emit --exclude=* and exclude everything. "
+                    f"Write it as a YAML list, one item per line."
+                )
+            if key == "exclude_patterns":
+                _reject_whitespace_in_patterns(
+                    [p for p in value if isinstance(p, str)],
+                    "overrides.exclude_patterns",
+                )
+        return v
+
     @field_validator("id")
     @classmethod
     def id_nonempty(cls, v: str) -> str:
@@ -184,6 +218,37 @@ class Auth(BaseModel):
         return self
 
 
+def _reject_whitespace_in_patterns(patterns: list[str], field: str) -> list[str]:
+    """Refuse an exclude pattern containing whitespace.
+
+    EXCLUDE_PATTERNS is emitted as one string: the patterns joined by single
+    spaces, each prefixed `--exclude=`, with no quoting and no escaping. A
+    pattern holding a space therefore word-splits at the consumer into
+    `--exclude=<first part>` plus stray POSITIONAL arguments — and on an rclone
+    sync command positional arguments are the source and destination. So the
+    failure is not a missed exclusion, it is a changed command.
+
+    The information is destroyed in the plan, not downstream: once the patterns
+    are joined, nothing can tell where one ended. No consumer can recover it.
+    Hence a compile error rather than a warning.
+
+    Until `--exclude-from` exists (proposed, not built), a path with spaces is
+    written with `?` for each space — rclone matches any single character —
+    with the literal path in a registry comment beside it.
+    """
+    for pattern in patterns:
+        if any(ch.isspace() for ch in pattern):
+            raise ValueError(
+                f"{field}: exclude pattern {pattern!r} contains whitespace. "
+                "EXCLUDE_PATTERNS is a single space-joined string, so this "
+                "would reach rclone as stray positional arguments and change "
+                "what the command operates on. Write each space as '?' "
+                "(matches any one character) and keep the literal path in a "
+                "comment, or ask for --exclude-from."
+            )
+    return patterns
+
+
 class SyncDefaults(BaseModel):
     """Per-account defaults applied to all drives unless overridden."""
 
@@ -191,6 +256,12 @@ class SyncDefaults(BaseModel):
     schedule: str
     sync_flags: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)
+
+    @field_validator("exclude_patterns")
+    @classmethod
+    def patterns_have_no_whitespace(cls, v: list[str]) -> list[str]:
+        """Layer 1 of three: the account's own defaults."""
+        return _reject_whitespace_in_patterns(v, "sync_defaults.exclude_patterns")
 
     @field_validator("local_subdir")
     @classmethod
@@ -221,6 +292,12 @@ class Account(BaseModel):
     sync_defaults: SyncDefaults
     additional_excludes: list[str] = Field(default_factory=list)
     drives: list[Drive] = Field(default_factory=list)
+
+    @field_validator("additional_excludes")
+    @classmethod
+    def additional_excludes_have_no_whitespace(cls, v: list[str]) -> list[str]:
+        """Layer 3 of three: the account's additions."""
+        return _reject_whitespace_in_patterns(v, "additional_excludes")
 
     @field_validator("remote_name")
     @classmethod
