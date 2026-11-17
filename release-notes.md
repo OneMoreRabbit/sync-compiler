@@ -13,6 +13,28 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.4.6 — 2026-11-17
+
+**TL;DR:** emits compiled-sync-plan **0.8** — `--no-update-dir-modtime` now on every
+**one-way** sync too, not only the two-way ones.
+
+- **A one-way sync had no baseline flags at all.** `SYNC_FLAGS` came *entirely* from the
+  registry, so this could not be fixed once for every org — it would have had to be
+  written into every account by hand and kept there. 0.8 adds a fixed baseline, merged
+  with the registry's own flags and **deduped**, so an account already listing the flag
+  is unaffected and no registry needs editing.
+- Two ARC one-way Drive copies have **failed on every run since at least 2026-09-15**.
+  **The folder date is one of three causes, not the cause** — this fixes the one that is
+  sync-compile's and does not on its own fix those copies.
+
+**Measured:** a real compile of `arc` emits
+`SYNC_FLAGS: --no-update-dir-modtime --use-server-modtime --fast-list` on both one-way
+instances. **Not measured:** anything on beaver — no one-way run has been made with the
+flag, and rclone is not installed on this seat.
+
+**Nothing for consumers to change.** One flag inside a string consumers already pass to
+rclone verbatim. Plan `schema_version` moves 0.7 → 0.8.
+
 ## v0.4.5 — 2026-11-15
 
 **TL;DR:** emits compiled-sync-plan **0.7** — every two-way sync now carries
