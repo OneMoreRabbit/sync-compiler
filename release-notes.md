@@ -13,6 +13,36 @@ tag. Plain English: a reader skimming this page should know what changed and
 whether they have to act. Detail lives in commits, contracts and troubleshooting
 reports — link them, don't repeat them.
 
+## v0.4.8 — 2026-11-17
+
+**TL;DR:** emits compiled-sync-plan **0.10** — a one-way sync now carries the same
+`MAX_DELETE` file count a two-way one does, and one warning stops firing where it said
+nothing true.
+
+- **`MAX_DELETE` on every enabled instance of both kinds**, default 50 files, from
+  `sync_defaults.max_delete`, overridable per drive, refused below 1. Operator ruling
+  2026-11-17. Until now a one-way run deleted whatever the remote no longer had,
+  unbounded — the estate counted one copy wanting to delete 356 files, 175 of which had
+  moved or been renamed rather than been deleted.
+- **It is never passed to rclone as `--max-delete`.** For a one-way sync that flag *is* a
+  count, so the temptation is real — but rclone stops part-way through the run and leaves
+  the destination half-changed. The estate's wrapper dry-runs and refuses the run before
+  anything is deleted.
+- **A drive's own `max_delete` override is checked against the drive**, so the error
+  names it instead of pointing at the account's defaults, where the value is not.
+- **The unprovisioned-remote warning now fires only when some `rclone_users` entry
+  declares a `remote_name`.** An org whose entries all omit it is the deliberately
+  userless shape — a personal org reaching its Drive by `oauth` — and the warning was
+  written when "no `remote_name`" also meant "no accounts".
+
+**Action for consumers:** read and enforce `MAX_DELETE` on one-way instances. This is the
+first change since 0.4.5 that needs anything done, rather than just being passed through.
+
+**Measured** on the estate's registry copy: `MAX_DELETE` emitted on 6 instances for
+`arc`, 1 for `job`, all at 50; `top` has none because both its instances are disabled.
+The warning is gone for `job` and still fires for `arc`. **Not measured:** anything on
+beaver.
+
 ## v0.4.7 — 2026-11-17
 
 **TL;DR:** emits compiled-sync-plan **0.9** — closes two ways a value in the plan could

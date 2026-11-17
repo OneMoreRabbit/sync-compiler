@@ -208,7 +208,11 @@ def _validate_rclone_users(
         )
 
     for account in main.accounts:
-        if account.remote_name not in user_remotes:
+        # Only meaningful when SOMETHING declares a remote_name. An org whose
+        # rclone_users entries all omit it is the deliberately userless shape
+        # (a personal org reaching its Drive by oauth), and telling it its
+        # account is unprovisioned says nothing true (arch, hub #14607).
+        if user_remotes and account.remote_name not in user_remotes:
             result.warn(
                 f"account '{account.remote_name}' has no matching remote_name in "
                 f"rclone_users[] - Ansible may not have provisioned the entrypoint remote",

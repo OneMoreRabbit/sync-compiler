@@ -29,8 +29,8 @@ from .models import (
 )
 from .registry import resolve_surface_path
 
-__version__ = "0.4.7"
-SCHEMA_VERSION = "0.9"
+__version__ = "0.4.8"
+SCHEMA_VERSION = "0.10"
 
 # Baseline bisync flags. Compiler always includes these; conflict-resolve flags
 # are added based on user's conflict_policy.
@@ -72,11 +72,13 @@ def resolved_sync_defaults(
     sync_flags = list(defaults.sync_flags) + list(overrides.get("sync_flags", []))
     exclude_patterns = _merge_list(defaults.exclude_patterns, overrides.get("exclude_patterns", []))
     exclude_patterns = _merge_list(exclude_patterns, additional_excludes)
+    max_delete = overrides.get("max_delete", defaults.max_delete)
     return SyncDefaults(
         local_subdir=local_subdir,
         schedule=schedule,
         sync_flags=sync_flags,
         exclude_patterns=exclude_patterns,
+        max_delete=max_delete,
     )
 
 
@@ -166,6 +168,7 @@ def env_vars(
         "REMOTE_NAME": rclone_remote_name(account, drive),
         "LOCAL_DEST": local_dir_path(registry, account, drive),
         "SYNC_FLAGS": sync_flags,
+        "MAX_DELETE": str(resolved.max_delete),
         "EXCLUDE_PATTERNS": exclude_patterns,
     }
 
