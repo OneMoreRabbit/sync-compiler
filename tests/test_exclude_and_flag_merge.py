@@ -166,6 +166,28 @@ class TestOneWayMaxDelete:
         r = resolved_sync_defaults(_defaults(max_delete=50), {"max_delete": 5}, [])
         assert r.max_delete == 5
 
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_a_drive_override_below_1_fails_and_names_the_drive(self, bad: int) -> None:
+        """Asked for by arch (hub #14621) before the tag.
+
+        The shared check reports the field it is given, so an override caught
+        inside resolved_sync_defaults said `sync_defaults.max_delete` — sending
+        a reader to the account's defaults when the bad value is on one drive.
+        Caught on Drive instead, where the name is in hand.
+        """
+        with pytest.raises(ValidationError) as exc:
+            Drive(id="i", cloud_name="c", local_name="academy", enabled=True,
+                  overrides={"max_delete": bad})
+        message = str(exc.value)
+        assert "academy" in message
+        assert "overrides.max_delete" in message
+        assert "sync_defaults.max_delete" not in message
+
+    def test_a_non_integer_drive_override_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="must be an integer"):
+            Drive(id="i", cloud_name="c", local_name="academy", enabled=True,
+                  overrides={"max_delete": "50"})
+
 
 class TestUserlessOrgIsNotWarned:
     """0.10: no 'unprovisioned remote' warning when nothing declares one.

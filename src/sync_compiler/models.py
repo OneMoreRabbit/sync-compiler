@@ -64,6 +64,25 @@ class Drive(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
     description: str | None = None
 
+    @model_validator(mode="after")
+    def override_max_delete_bounded(self) -> Drive:
+        """A drive's own `max_delete`, refused below 1 and NAMING THE DRIVE.
+
+        The shared check reports the field it was given, so an override caught
+        inside `resolved_sync_defaults` would say `sync_defaults.max_delete` —
+        sending a reader to the account's defaults when the bad value is on one
+        drive. Checked here, where the drive's name is in hand.
+        """
+        if "max_delete" in self.overrides:
+            value = self.overrides["max_delete"]
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(
+                    f"drive '{self.local_name}': overrides.max_delete must be an "
+                    f"integer, not {type(value).__name__}"
+                )
+            _check_max_delete(value, f"drive '{self.local_name}': overrides.max_delete")
+        return self
+
     @field_validator("overrides")
     @classmethod
     def override_patterns_have_no_whitespace(cls, v: dict[str, Any]) -> dict[str, Any]:

@@ -28,6 +28,8 @@ nothing true.
   count, so the temptation is real — but rclone stops part-way through the run and leaves
   the destination half-changed. The estate's wrapper dry-runs and refuses the run before
   anything is deleted.
+- **A drive's own `max_delete` override is checked against the drive**, so the error
+  names it instead of pointing at the account's defaults, where the value is not.
 - **The unprovisioned-remote warning now fires only when some `rclone_users` entry
   declares a `remote_name`.** An org whose entries all omit it is the deliberately
   userless shape — a personal org reaching its Drive by `oauth` — and the warning was
