@@ -62,6 +62,20 @@ Two facts to write:
   unread. The page should not leave a reader thinking it has been enforced
   since v0.4.8 was tagged.
 
+### architecture 0.6 diagram: the seat bind path moved
+From arch, hub #16514. Seat data folders are bound at
+`/home/dev/work/data/<name>` from seat-data-sharing-design 0.4 (the operator's
+word, 2026-11-18). Arch has already repaired my links to the design itself.
+
+One place of mine still carries the old path, and it is a diagram label, not
+prose: `sync-compile-architecture-v0_6.md` line 204 reads
+`ARC GIS seat<br/>~/data/ai_data`. Change it to
+`/home/dev/work/data/ai_data` at that document's **next version**. Arch said
+nothing to build and no version for this alone.
+
+The archived 0.5 carries the same label and is left alone: an archived
+version is byte-identical, and supersession is recorded only in the successor.
+
 ### §3: a flag that quiets rclone's output makes every one-way run refused
 From arch, hub #14686, found by estate-manage reviewing the estate's count check.
 
